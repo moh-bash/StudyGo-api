@@ -7,6 +7,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module.js';
 import { BootstrapModule } from './bootstrap/bootstrap.module.js';
+import { CatalogModule } from './catalog/catalog.module.js';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard.js';
 import { RolesGuard } from './common/guards/roles.guard.js';
 import { configuration } from './config/configuration.js';
@@ -68,6 +69,7 @@ export const appInstrument = observeEnabled ? ObserveInstrument : undefined;
     SubjectsModule,
     ProfessorsModule,
     SectionsModule,
+    CatalogModule,
     EnrollmentsModule,
     TeamsModule,
     TasksModule,

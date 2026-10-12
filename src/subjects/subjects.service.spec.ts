@@ -1,13 +1,44 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { Repository } from 'typeorm';
 import { describe, expect, it } from 'vitest';
+import { UserRole } from '../common/enums.js';
 import { AcademicProgram } from '../programs/entities/program.entity.js';
+import type { ResolvedScope } from '../users/academic-scope.js';
 import type { CreateSubjectDto } from './dto/create-subject.dto.js';
 import { Subject } from './entities/subject.entity.js';
 import { SubjectsService } from './subjects.service.js';
 
 const SUBJECT_ID = 'subj-1';
 const OTHER_ID = 'subj-2';
+const P_A = '00000000-0000-4000-8000-00000000000a';
+const P_B = '00000000-0000-4000-8000-00000000000b';
+
+const ADMIN_SCOPE: ResolvedScope = {
+  userId: 'admin-1',
+  role: UserRole.ADMIN,
+  programId: null,
+  assignedSubjectIds: [],
+};
+
+function managerScope(overrides: Partial<ResolvedScope> = {}): ResolvedScope {
+  return {
+    userId: 'mgr-1',
+    role: UserRole.SUBJECT_MANAGER,
+    programId: P_A,
+    assignedSubjectIds: [SUBJECT_ID],
+    ...overrides,
+  };
+}
+
+function programManagerScope(overrides: Partial<ResolvedScope> = {}): ResolvedScope {
+  return {
+    userId: 'pm-1',
+    role: UserRole.PROGRAM_MANAGER,
+    programId: P_A,
+    assignedSubjectIds: [],
+    ...overrides,
+  };
+}
 
 function makeSubject(overrides: Partial<Subject> = {}): Subject {
   return {
@@ -70,7 +101,7 @@ function createDto(overrides: Partial<CreateSubjectDto> = {}): CreateSubjectDto 
 describe('SubjectsService.create', () => {
   it('defaults weights to 0/100 when none are provided', async () => {
     const service = makeService();
-    const saved = await service.create(createDto());
+    const saved = await service.create(createDto(), ADMIN_SCOPE);
     expect(saved.projectWeight).toBe(0);
     expect(saved.examWeight).toBe(100);
     expect(saved.isActive).toBe(true);
@@ -80,34 +111,36 @@ describe('SubjectsService.create', () => {
 
   it('keeps provided weights when they sum to 100', async () => {
     const service = makeService();
-    const saved = await service.create(createDto({ projectWeight: 50, examWeight: 50 }));
+    const saved = await service.create(createDto({ projectWeight: 50, examWeight: 50 }), ADMIN_SCOPE);
     expect(saved.projectWeight).toBe(50);
     expect(saved.examWeight).toBe(50);
   });
 
   it('requires both weights together', async () => {
     const service = makeService();
-    await expect(service.create(createDto({ projectWeight: 50 }))).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.create(createDto({ projectWeight: 50 }), ADMIN_SCOPE),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects weights that do not sum to 100', async () => {
     const service = makeService();
     await expect(
-      service.create(createDto({ projectWeight: 40, examWeight: 50 })),
+      service.create(createDto({ projectWeight: 40, examWeight: 50 }), ADMIN_SCOPE),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('maps unique-code violations to a BadRequestException', async () => {
     const service = makeService({ save: async () => Promise.reject({ code: '23505' }) });
-    await expect(service.create(createDto())).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.create(createDto(), ADMIN_SCOPE)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('rejects an unknown department/program reference', async () => {
     const service = makeService({ programExists: false });
     await expect(
-      service.create(createDto({ programId: 'missing' })),
+      service.create(createDto({ programId: 'missing' }), ADMIN_SCOPE),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
@@ -115,35 +148,111 @@ describe('SubjectsService.create', () => {
 describe('SubjectsService.findOne', () => {
   it('throws NotFoundException for an unknown id', async () => {
     const service = makeService({ stored: [] });
-    await expect(service.findOne('nope')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.findOne('nope', ADMIN_SCOPE)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
 describe('SubjectsService prerequisites', () => {
   it('rejects a subject as its own prerequisite', async () => {
     const service = makeService();
-    await expect(service.setPrerequisites(SUBJECT_ID, [SUBJECT_ID])).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.setPrerequisites(SUBJECT_ID, [SUBJECT_ID], ADMIN_SCOPE),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects prerequisite ids that do not exist', async () => {
     const service = makeService();
-    await expect(service.setPrerequisites(SUBJECT_ID, ['ghost'])).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.setPrerequisites(SUBJECT_ID, ['ghost'], ADMIN_SCOPE),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('assigns existing prerequisites', async () => {
     const service = makeService({ stored: [makeSubject(), makeSubject({ id: OTHER_ID })] });
-    const result = await service.setPrerequisites(SUBJECT_ID, [OTHER_ID]);
+    const result = await service.setPrerequisites(SUBJECT_ID, [OTHER_ID], ADMIN_SCOPE);
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe(OTHER_ID);
   });
 
   it('deduplicates prerequisite ids', async () => {
     const service = makeService({ stored: [makeSubject(), makeSubject({ id: OTHER_ID })] });
-    const result = await service.setPrerequisites(SUBJECT_ID, [OTHER_ID, OTHER_ID]);
+    const result = await service.setPrerequisites(SUBJECT_ID, [OTHER_ID, OTHER_ID], ADMIN_SCOPE);
     expect(result).toHaveLength(1);
+  });
+});
+
+describe('SubjectsService manager scope', () => {
+  it('forces a Subject Manager subject into their own program and rejects other programs', async () => {
+    const service = makeService();
+    const created = await service.create(createDto(), managerScope());
+    expect(created.programId).toBe(P_A);
+
+    await expect(
+      service.create(createDto({ programId: P_B }), managerScope()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses to create when a manager has no program', async () => {
+    const service = makeService();
+    await expect(
+      service.create(createDto(), managerScope({ programId: null })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('hides subjects a Subject Manager is not assigned (404, not 403)', async () => {
+    const service = makeService({
+      stored: [makeSubject({ id: SUBJECT_ID, programId: P_A })],
+    });
+    await expect(
+      service.findOne(SUBJECT_ID, managerScope({ assignedSubjectIds: [OTHER_ID] })),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('allows a Subject Manager to read an assigned subject in their program', async () => {
+    const service = makeService({
+      stored: [makeSubject({ id: SUBJECT_ID, programId: P_A })],
+    });
+    const subject = await service.findOne(SUBJECT_ID, managerScope());
+    expect(subject.id).toBe(SUBJECT_ID);
+  });
+
+  it('limits a Program Manager to their own program', async () => {
+    const inProgram = makeService({ stored: [makeSubject({ id: SUBJECT_ID, programId: P_A })] });
+    expect((await inProgram.findOne(SUBJECT_ID, programManagerScope())).id).toBe(SUBJECT_ID);
+
+    const outOfProgram = makeService({ stored: [makeSubject({ id: SUBJECT_ID, programId: P_B })] });
+    await expect(
+      outOfProgram.findOne(SUBJECT_ID, programManagerScope()),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('never treats an unprogrammed subject as within a manager scope', async () => {
+    const service = makeService({
+      stored: [makeSubject({ id: SUBJECT_ID, programId: null })],
+    });
+    await expect(
+      service.findOne(SUBJECT_ID, programManagerScope()),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('prevents a manager from moving a subject to another program', async () => {
+    const service = makeService({
+      stored: [makeSubject({ id: SUBJECT_ID, programId: P_A })],
+    });
+    await expect(
+      service.update(SUBJECT_ID, { programId: P_B }, managerScope()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('rejects a prerequisite outside the manager scope', async () => {
+    const service = makeService({
+      stored: [
+        makeSubject({ id: SUBJECT_ID, programId: P_A }),
+        makeSubject({ id: OTHER_ID, programId: P_B }),
+      ],
+    });
+    await expect(
+      service.setPrerequisites(SUBJECT_ID, [OTHER_ID], managerScope()),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

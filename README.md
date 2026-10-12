@@ -17,7 +17,8 @@ The API is served under `/api/v1/...` (global prefix `api`, URI version `1`). In
 ## Prerequisites
 
 - Node 24+ and npm 11+
-- A PostgreSQL database (Neon or local). `uuid-ossp`/`gen_random_uuid` must be available.
+- A PostgreSQL database (Neon or local). The initial migration enables `uuid-ossp`
+  automatically; the database role must have permission to create extensions.
 
 ## Setup
 

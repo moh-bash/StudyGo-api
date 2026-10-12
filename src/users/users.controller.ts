@@ -147,7 +147,7 @@ export class UsersController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: SetSubjectManagersDto,
   ): Promise<AcademicAssignmentsDto> {
-    return this.usersService.setSubjectManagers(id, dto.subjectIds);
+    return this.usersService.setSubjectManagers(id, dto.subjectIds, dto.programId);
   }
 
   @Roles(UserRole.ADMIN)

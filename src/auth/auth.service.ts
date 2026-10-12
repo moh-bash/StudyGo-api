@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import bcrypt from 'bcrypt';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { AccountStatus, UserRole } from '../common/enums.js';
 import type { JwtPayload } from '../common/interfaces.js';
 import { isUniqueViolation } from '../common/utils/db.util.js';
@@ -113,8 +113,13 @@ export class AuthService {
       throw new ForbiddenException('Account is suspended');
     }
 
-    stored.revokedAt = new Date();
-    await this.refreshTokens.save(stored);
+    const revokeResult = await this.refreshTokens.update(
+      { id: stored.id, revokedAt: IsNull() },
+      { revokedAt: new Date() },
+    );
+    if (revokeResult.affected !== 1) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
 
     const tokens = await this.issueTokens(stored.user);
     return { ...tokens, user: toUserResponse(stored.user) };

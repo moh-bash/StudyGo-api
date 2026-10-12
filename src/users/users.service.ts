@@ -88,6 +88,7 @@ export class UsersService {
 
   async update(id: string, dto: UpdateUserDto): Promise<UserResponseDto> {
     const user = await this.getOrFail(id);
+    const previousProgramId = user.programId;
     this.applyProfileFields(user, dto);
     let roleChanged = false;
     if (dto.role !== undefined) {
@@ -114,6 +115,18 @@ export class UsersService {
       } else {
         user.programId = (await this.findProgram(dto.programId)).id;
       }
+    }
+    const programChanged = dto.programId !== undefined && user.programId !== previousProgramId;
+    if (programChanged && user.role === UserRole.SUBJECT_MANAGER) {
+      // Changing a Subject Manager's program invalidates every explicit subject
+      // assignment (they belonged to the previous program). Clear them and revert
+      // to STUDENT so no stale/orphaned grant survives; the admin re-assigns.
+      await this.dataSource.transaction(async (manager) => {
+        await manager.delete(SubjectManagerAssignment, { userId: user.id });
+        user.role = UserRole.STUDENT;
+        await manager.save(user);
+      });
+      return toUserResponse(user);
     }
     await this.save(user);
     // A user who is no longer a Subject Manager must not retain assignments.
@@ -171,23 +184,34 @@ export class UsersService {
    * exist and belong to the user's own program; unprogrammed subjects are
    * rejected. An empty list removes all assignments and reverts to STUDENT.
    */
-  async setSubjectManagers(userId: string, subjectIds: string[]): Promise<AcademicAssignmentsDto> {
+  async setSubjectManagers(
+    userId: string,
+    subjectIds: string[],
+    programId?: string,
+  ): Promise<AcademicAssignmentsDto> {
     const user = await this.getOrFail(userId);
     this.assertNotSystemAdmin(user);
     const unique = [...new Set(subjectIds)];
+
+    // Optionally set (or move) the user's program in the same atomic call, so the
+    // admin never has to leave the account momentarily without a program.
+    if (programId !== undefined) {
+      user.programId = (await this.findProgram(programId)).id;
+    }
+    const targetProgramId = user.programId;
 
     if (unique.length === 0) {
       await this.dataSource.transaction(async (manager) => {
         await manager.delete(SubjectManagerAssignment, { userId });
         if (user.role === UserRole.SUBJECT_MANAGER) {
           user.role = UserRole.STUDENT;
-          await manager.save(user);
         }
+        await manager.save(user);
       });
       return this.getAcademicAssignments(userId);
     }
 
-    if (user.programId === null) {
+    if (targetProgramId === null) {
       throw new BadRequestException(
         'The user must have an academic program before subjects can be assigned',
       );
@@ -202,7 +226,7 @@ export class UsersService {
           `Subject ${subject.id} has no academic program and cannot be managed`,
         );
       }
-      if (subject.programId !== user.programId) {
+      if (subject.programId !== targetProgramId) {
         throw new BadRequestException(
           `Subject ${subject.id} does not belong to the user's academic program`,
         );
@@ -216,6 +240,7 @@ export class UsersService {
       );
       await manager.save(rows);
       user.role = UserRole.SUBJECT_MANAGER;
+      user.programId = targetProgramId;
       await manager.save(user);
     });
     return this.getAcademicAssignments(userId);

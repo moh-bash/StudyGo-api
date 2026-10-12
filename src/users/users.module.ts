@@ -5,6 +5,7 @@ import { AcademicProgram } from '../programs/entities/program.entity.js';
 import { Subject } from '../subjects/entities/subject.entity.js';
 import { SubjectManagerAssignment } from './entities/subject-manager-assignment.entity.js';
 import { User } from './entities/user.entity.js';
+import { AcademicScopeService } from './academic-scope.service.js';
 import { UsersController } from './users.controller.js';
 import { UsersService } from './users.service.js';
 
@@ -19,7 +20,7 @@ import { UsersService } from './users.service.js';
     ]),
   ],
   controllers: [UsersController],
-  providers: [UsersService],
-  exports: [UsersService],
+  providers: [UsersService, AcademicScopeService],
+  exports: [UsersService, AcademicScopeService],
 })
 export class UsersModule {}

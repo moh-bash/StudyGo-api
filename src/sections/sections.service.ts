@@ -2,11 +2,13 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { PaginatedResult } from '../common/interfaces.js';
+import { UserRole } from '../common/enums.js';
 import { isUniqueViolation } from '../common/utils/db.util.js';
 import { buildPaginatedResult, getSkip } from '../common/utils/pagination.util.js';
 import { Professor } from '../professors/entities/professor.entity.js';
 import { Semester } from '../semesters/entities/semester.entity.js';
 import { Subject } from '../subjects/entities/subject.entity.js';
+import { isManager, scopeCanAccessSubject, type ResolvedScope } from '../users/academic-scope.js';
 import { CreateSectionDto } from './dto/create-section.dto.js';
 import { CreateSectionScheduleDto } from './dto/create-section-schedule.dto.js';
 import { QuerySectionsDto } from './dto/query-sections.dto.js';
@@ -25,9 +27,9 @@ export class SectionsService {
     @InjectRepository(Professor) private readonly professors: Repository<Professor>,
   ) {}
 
-  async create(dto: CreateSectionDto): Promise<AcademicSection> {
+  async create(dto: CreateSectionDto, scope: ResolvedScope): Promise<AcademicSection> {
     await this.ensureSemester(dto.semesterId);
-    await this.ensureSubject(dto.subjectId);
+    await this.assertSubjectAccess(dto.subjectId, scope);
     if (dto.professorId) {
       await this.ensureProfessor(dto.professorId);
     }
@@ -44,13 +46,17 @@ export class SectionsService {
     return this.save(section);
   }
 
-  async findAll(query: QuerySectionsDto): Promise<PaginatedResult<AcademicSection>> {
+  async findAll(
+    query: QuerySectionsDto,
+    scope: ResolvedScope,
+  ): Promise<PaginatedResult<AcademicSection>> {
     const qb = this.sections
       .createQueryBuilder('section')
       .leftJoinAndSelect('section.subject', 'subject')
       .leftJoinAndSelect('section.semester', 'semester')
       .leftJoinAndSelect('section.professor', 'professor')
       .orderBy('section.code', 'ASC');
+    this.applyScopeFilter(qb, scope);
     if (query.semesterId) {
       qb.andWhere('section.semesterId = :semesterId', { semesterId: query.semesterId });
     }
@@ -71,12 +77,18 @@ export class SectionsService {
     return buildPaginatedResult(data, total, query.page, query.limit);
   }
 
-  async findOne(id: string): Promise<AcademicSection & { schedules: SectionSchedule[] }> {
+  async findOne(
+    id: string,
+    scope: ResolvedScope,
+  ): Promise<AcademicSection & { schedules: SectionSchedule[] }> {
     const section = await this.sections.findOne({
       where: { id },
       relations: { subject: true, semester: true, professor: true },
     });
     if (!section) {
+      throw new NotFoundException('Section not found');
+    }
+    if (isManager(scope) && (!section.subject || !scopeCanAccessSubject(scope, section.subject))) {
       throw new NotFoundException('Section not found');
     }
     const schedules = await this.schedules.find({
@@ -86,14 +98,15 @@ export class SectionsService {
     return Object.assign(section, { schedules });
   }
 
-  async update(id: string, dto: UpdateSectionDto): Promise<AcademicSection> {
+  async update(id: string, dto: UpdateSectionDto, scope: ResolvedScope): Promise<AcademicSection> {
     const section = await this.getOrFail(id);
+    await this.assertSubjectAccess(section.subjectId, scope);
     if (dto.semesterId !== undefined) {
       await this.ensureSemester(dto.semesterId);
       section.semesterId = dto.semesterId;
     }
     if (dto.subjectId !== undefined) {
-      await this.ensureSubject(dto.subjectId);
+      await this.assertSubjectAccess(dto.subjectId, scope);
       section.subjectId = dto.subjectId;
     }
     if (dto.professorId !== undefined) {
@@ -120,8 +133,9 @@ export class SectionsService {
     return this.save(section);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, scope: ResolvedScope): Promise<void> {
     const section = await this.getOrFail(id);
+    await this.assertSubjectAccess(section.subjectId, scope);
     try {
       await this.sections.remove(section);
     } catch {
@@ -131,16 +145,20 @@ export class SectionsService {
     }
   }
 
-  async listSchedules(sectionId: string): Promise<SectionSchedule[]> {
-    await this.getOrFail(sectionId);
+  async listSchedules(sectionId: string, scope: ResolvedScope): Promise<SectionSchedule[]> {
+    await this.assertSectionAccess(sectionId, scope);
     return this.schedules.find({
       where: { sectionId },
       order: { dayOfWeek: 'ASC', startTime: 'ASC' },
     });
   }
 
-  async addSchedule(sectionId: string, dto: CreateSectionScheduleDto): Promise<SectionSchedule> {
-    await this.getOrFail(sectionId);
+  async addSchedule(
+    sectionId: string,
+    dto: CreateSectionScheduleDto,
+    scope: ResolvedScope,
+  ): Promise<SectionSchedule> {
+    await this.assertSectionAccess(sectionId, scope);
     this.assertTimeRange(dto.startTime, dto.endTime);
     return this.schedules.save(
       this.schedules.create({
@@ -157,7 +175,9 @@ export class SectionsService {
     sectionId: string,
     scheduleId: string,
     dto: UpdateSectionScheduleDto,
+    scope: ResolvedScope,
   ): Promise<SectionSchedule> {
+    await this.assertSectionAccess(sectionId, scope);
     const schedule = await this.getScheduleOrFail(sectionId, scheduleId);
     const start = dto.startTime ?? schedule.startTime;
     const end = dto.endTime ?? schedule.endTime;
@@ -171,7 +191,8 @@ export class SectionsService {
     return this.schedules.save(schedule);
   }
 
-  async removeSchedule(sectionId: string, scheduleId: string): Promise<void> {
+  async removeSchedule(sectionId: string, scheduleId: string, scope: ResolvedScope): Promise<void> {
+    await this.assertSectionAccess(sectionId, scope);
     const schedule = await this.getScheduleOrFail(sectionId, scheduleId);
     await this.schedules.remove(schedule);
   }
@@ -192,6 +213,58 @@ export class SectionsService {
     return schedule;
   }
 
+  /**
+   * Loads the section and enforces the caller's scope through its subject. Used
+   * by every section and schedule mutation so no path bypasses the subject check.
+   */
+  private async assertSectionAccess(sectionId: string, scope: ResolvedScope): Promise<void> {
+    const section = await this.getOrFail(sectionId);
+    await this.assertSubjectAccess(section.subjectId, scope);
+  }
+
+  /**
+   * Enforces the caller's scope against a subject id. Managers only reach their
+   * assigned program/subjects; out-of-scope ids surface as 404 so a manager
+   * cannot probe for sections of subjects they do not manage.
+   */
+  private async assertSubjectAccess(subjectId: string, scope: ResolvedScope): Promise<void> {
+    const subject = await this.subjects.findOne({ where: { id: subjectId } });
+    if (isManager(scope)) {
+      // Unknown and out-of-scope subjects both surface as 404 for managers so a
+      // subject they do not manage cannot be probed for existence.
+      if (!subject || !scopeCanAccessSubject(scope, subject)) {
+        throw new NotFoundException('Section not found');
+      }
+      return;
+    }
+    if (!subject) {
+      throw new BadRequestException('Subject not found');
+    }
+  }
+
+  private applyScopeFilter(
+    qb: ReturnType<Repository<AcademicSection>['createQueryBuilder']>,
+    scope: ResolvedScope,
+  ): void {
+    if (scope.role === UserRole.SUBJECT_MANAGER) {
+      if (scope.assignedSubjectIds.length === 0) {
+        qb.andWhere('1 = 0');
+        return;
+      }
+      qb.andWhere('section.subjectId IN (:...scopeSubjectIds)', {
+        scopeSubjectIds: scope.assignedSubjectIds,
+      });
+      return;
+    }
+    if (scope.role === UserRole.PROGRAM_MANAGER) {
+      if (scope.programId === null) {
+        qb.andWhere('1 = 0');
+        return;
+      }
+      qb.andWhere('subject.programId = :scopeProgramId', { scopeProgramId: scope.programId });
+    }
+  }
+
   private assertTimeRange(start: string, end: string): void {
     if (start >= end) {
       throw new BadRequestException('startTime must be before endTime');
@@ -201,12 +274,6 @@ export class SectionsService {
   private async ensureSemester(id: string): Promise<void> {
     if (!(await this.semesters.exists({ where: { id } }))) {
       throw new BadRequestException('Semester not found');
-    }
-  }
-
-  private async ensureSubject(id: string): Promise<void> {
-    if (!(await this.subjects.exists({ where: { id } }))) {
-      throw new BadRequestException('Subject not found');
     }
   }
 

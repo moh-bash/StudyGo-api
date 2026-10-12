@@ -89,6 +89,48 @@ describe('AuthService.register', () => {
     expect(result.user.programId).toBe(PROGRAM_ID);
   });
 
+  describe('AuthService.refresh', () => {
+    it('atomically accepts a refresh token only once under concurrent rotation', async () => {
+      const stored = {
+        id: 'refresh-1',
+        tokenHash: 'hash',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 60_000),
+        user: {
+          id: 'user-1',
+          email: 'user@example.com',
+          role: UserRole.STUDENT,
+          status: AccountStatus.ACTIVE,
+        },
+      } as unknown as RefreshToken;
+      let revokeCalls = 0;
+      const refreshTokens = {
+        findOne: async () => ({ ...stored, revokedAt: null }),
+        update: async () => {
+          revokeCalls += 1;
+          if (revokeCalls === 1) {
+            stored.revokedAt = new Date();
+            return { affected: 1 };
+          }
+          return { affected: 0 };
+        },
+        create: (data: Record<string, unknown>) => data,
+        save: async (record: Record<string, unknown>) => record,
+      } as unknown as Repository<RefreshToken>;
+      const { service } = makeService();
+      (service as unknown as { refreshTokens: Repository<RefreshToken> }).refreshTokens = refreshTokens;
+
+      const results = await Promise.allSettled([
+        service.refresh({ refreshToken: 'refresh-value' }),
+        service.refresh({ refreshToken: 'refresh-value' }),
+      ]);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      expect(revokeCalls).toBe(2);
+    });
+  });
+
   it('creates a student without a program when none is supplied', async () => {
     const { service, created } = makeService();
     const result = await service.register(registerDto());

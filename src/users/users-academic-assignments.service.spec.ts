@@ -286,4 +286,41 @@ describe('UsersService.update role restrictions (PATCH)', () => {
       service.update('user-1', { programId: null } as never),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('changing a Subject Manager program clears assignments and reverts to STUDENT', async () => {
+    const { service, store } = makeService({
+      user: makeUser({ role: UserRole.SUBJECT_MANAGER, programId: P_A }),
+      program: { id: P_B } as AcademicProgram,
+    });
+    store.assignments.push({ userId: 'user-1', subjectId: S_1 });
+    const result = await service.update('user-1', { programId: P_B } as never);
+    expect(result.role).toBe(UserRole.STUDENT);
+    expect(result.programId).toBe(P_B);
+    expect(store.assignments).toEqual([]);
+  });
+});
+
+describe('UsersService.setSubjectManagers program option', () => {
+  it('sets the program and the managed subjects together', async () => {
+    const { service } = makeService({
+      user: makeUser(),
+      program: { id: P_A } as AcademicProgram,
+      subjects: [makeSubject(S_1, P_A)],
+    });
+    const result = await service.setSubjectManagers('user-1', [S_1], P_A);
+    expect(result.role).toBe(UserRole.SUBJECT_MANAGER);
+    expect(result.programId).toBe(P_A);
+    expect(result.managedSubjectIds).toEqual([S_1]);
+  });
+
+  it('rejects a subject that does not belong to the supplied program', async () => {
+    const { service } = makeService({
+      user: makeUser(),
+      program: { id: P_B } as AcademicProgram,
+      subjects: [makeSubject(S_1, P_A)],
+    });
+    await expect(service.setSubjectManagers('user-1', [S_1], P_B)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
 });

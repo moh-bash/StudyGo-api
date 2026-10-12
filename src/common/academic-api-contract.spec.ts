@@ -61,6 +61,7 @@ function find(routes: RouteInfo[], method: RequestMethod, handler: string): Rout
 }
 
 const ADMIN = [UserRole.ADMIN];
+const MANAGERS = [UserRole.ADMIN, UserRole.PROGRAM_MANAGER, UserRole.SUBJECT_MANAGER];
 
 describe('academic API contract (controller metadata)', () => {
   it('mounts each academic controller at its documented base path', () => {
@@ -100,16 +101,17 @@ describe('academic API contract (controller metadata)', () => {
     expect(find(routes, RequestMethod.DELETE, 'remove').roles).toEqual(ADMIN);
   });
 
-  it('subjects: prerequisite reads are open, all writes including prerequisites are admin-only', () => {
+  it('subjects: reads open; write routes allow admin + managers (scope enforced in service), delete stays admin-only', () => {
     const routes = readRoutes(SubjectsController);
     expect(find(routes, RequestMethod.GET, 'findAll').roles).toBeUndefined();
+    expect(find(routes, RequestMethod.GET, 'findOne').roles).toBeUndefined();
     expect(find(routes, RequestMethod.GET, 'getPrerequisites').roles).toBeUndefined();
-    expect(find(routes, RequestMethod.POST, 'create').roles).toEqual(ADMIN);
-    expect(find(routes, RequestMethod.PATCH, 'update').roles).toEqual(ADMIN);
+    expect(find(routes, RequestMethod.POST, 'create').roles).toEqual(MANAGERS);
+    expect(find(routes, RequestMethod.PATCH, 'update').roles).toEqual(MANAGERS);
     expect(find(routes, RequestMethod.DELETE, 'remove').roles).toEqual(ADMIN);
-    expect(find(routes, RequestMethod.PUT, 'setPrerequisites').roles).toEqual(ADMIN);
-    expect(find(routes, RequestMethod.POST, 'addPrerequisite').roles).toEqual(ADMIN);
-    expect(find(routes, RequestMethod.DELETE, 'removePrerequisite').roles).toEqual(ADMIN);
+    expect(find(routes, RequestMethod.PUT, 'setPrerequisites').roles).toEqual(MANAGERS);
+    expect(find(routes, RequestMethod.POST, 'addPrerequisite').roles).toEqual(MANAGERS);
+    expect(find(routes, RequestMethod.DELETE, 'removePrerequisite').roles).toEqual(MANAGERS);
   });
 
   it('semesters and professors: reads open, writes admin-only', () => {
@@ -123,15 +125,17 @@ describe('academic API contract (controller metadata)', () => {
     }
   });
 
-  it('sections: schedule reads open, section and schedule writes admin-only', () => {
+  it('sections: reads open; section and schedule writes allow admin + managers (scope in service)', () => {
     const routes = readRoutes(SectionsController);
     expect(find(routes, RequestMethod.GET, 'findAll').roles).toBeUndefined();
     expect(find(routes, RequestMethod.GET, 'findOne').roles).toBeUndefined();
     expect(find(routes, RequestMethod.GET, 'listSchedules').roles).toBeUndefined();
-    expect(find(routes, RequestMethod.POST, 'create').roles).toEqual(ADMIN);
-    expect(find(routes, RequestMethod.POST, 'addSchedule').roles).toEqual(ADMIN);
-    expect(find(routes, RequestMethod.PATCH, 'updateSchedule').roles).toEqual(ADMIN);
-    expect(find(routes, RequestMethod.DELETE, 'removeSchedule').roles).toEqual(ADMIN);
+    expect(find(routes, RequestMethod.POST, 'create').roles).toEqual(MANAGERS);
+    expect(find(routes, RequestMethod.PATCH, 'update').roles).toEqual(MANAGERS);
+    expect(find(routes, RequestMethod.DELETE, 'remove').roles).toEqual(MANAGERS);
+    expect(find(routes, RequestMethod.POST, 'addSchedule').roles).toEqual(MANAGERS);
+    expect(find(routes, RequestMethod.PATCH, 'updateSchedule').roles).toEqual(MANAGERS);
+    expect(find(routes, RequestMethod.DELETE, 'removeSchedule').roles).toEqual(MANAGERS);
   });
 
   it('enrollments: owner/admin routes are guardless, admin-only routes carry @Roles(ADMIN)', () => {

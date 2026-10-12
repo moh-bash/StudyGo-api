@@ -1,10 +1,22 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import type { PaginatedResult } from '../common/interfaces.js';
+import { UserRole } from '../common/enums.js';
 import { isUniqueViolation } from '../common/utils/db.util.js';
 import { buildPaginatedResult, getSkip } from '../common/utils/pagination.util.js';
 import { AcademicProgram } from '../programs/entities/program.entity.js';
+import {
+  isManager,
+  scopeCanAccessSubject,
+  type ResolvedScope,
+  type ScopeSubject,
+} from '../users/academic-scope.js';
 import { CreateSubjectDto } from './dto/create-subject.dto.js';
 import { QuerySubjectsDto } from './dto/query-subjects.dto.js';
 import { UpdateSubjectDto } from './dto/update-subject.dto.js';
@@ -17,9 +29,10 @@ export class SubjectsService {
     @InjectRepository(AcademicProgram) private readonly programs: Repository<AcademicProgram>,
   ) {}
 
-  async create(dto: CreateSubjectDto): Promise<Subject> {
-    if (dto.programId) {
-      await this.ensureProgram(dto.programId);
+  async create(dto: CreateSubjectDto, scope: ResolvedScope): Promise<Subject> {
+    const programId = this.resolveCreateProgram(dto.programId, scope);
+    if (programId) {
+      await this.ensureProgram(programId);
     }
     const weights = this.resolveWeights(dto.projectWeight, dto.examWeight);
     const subject = this.subjects.create({
@@ -30,17 +43,18 @@ export class SubjectsService {
       creditHours: dto.creditHours,
       projectWeight: weights.projectWeight,
       examWeight: weights.examWeight,
-      programId: dto.programId ?? null,
+      programId,
       isActive: dto.isActive ?? true,
     });
     return this.save(subject);
   }
 
-  async findAll(query: QuerySubjectsDto): Promise<PaginatedResult<Subject>> {
+  async findAll(query: QuerySubjectsDto, scope: ResolvedScope): Promise<PaginatedResult<Subject>> {
     const qb = this.subjects
       .createQueryBuilder('subject')
       .leftJoinAndSelect('subject.program', 'program')
       .orderBy('subject.code', 'ASC');
+    this.applyScopeFilter(qb, scope);
     if (query.programId) {
       qb.andWhere('subject.programId = :programId', { programId: query.programId });
     }
@@ -58,24 +72,28 @@ export class SubjectsService {
     return buildPaginatedResult(data, total, query.page, query.limit);
   }
 
-  async findOne(id: string): Promise<Subject> {
-    const subject = await this.subjects.findOne({
-      where: { id },
-      relations: { program: true, prerequisites: true },
-    });
-    if (!subject) {
-      throw new NotFoundException('Subject not found');
-    }
+  async findOne(id: string, scope: ResolvedScope): Promise<Subject> {
+    const subject = await this.getSubjectOrFail(id);
+    this.assertSubjectAccess(subject, scope);
     return subject;
   }
 
-  async update(id: string, dto: UpdateSubjectDto): Promise<Subject> {
-    const subject = await this.findOne(id);
+  async update(id: string, dto: UpdateSubjectDto, scope: ResolvedScope): Promise<Subject> {
+    const subject = await this.findOne(id, scope);
     if (dto.programId !== undefined) {
-      if (dto.programId) {
-        await this.ensureProgram(dto.programId);
+      if (isManager(scope)) {
+        // A manager can never move a subject out of (or into) another program:
+        // the program is the boundary of their authority.
+        const target = dto.programId ?? null;
+        if (target !== subject.programId) {
+          throw new ForbiddenException("Managers cannot change a subject's academic program");
+        }
+      } else {
+        if (dto.programId) {
+          await this.ensureProgram(dto.programId);
+        }
+        subject.programId = dto.programId ?? null;
       }
-      subject.programId = dto.programId ?? null;
     }
     if (dto.code !== undefined) {
       subject.code = dto.code.trim();
@@ -107,7 +125,7 @@ export class SubjectsService {
   }
 
   async remove(id: string): Promise<void> {
-    const subject = await this.findOne(id);
+    const subject = await this.getSubjectOrFail(id);
     try {
       await this.subjects.remove(subject);
     } catch {
@@ -117,38 +135,113 @@ export class SubjectsService {
     }
   }
 
-  async getPrerequisites(id: string): Promise<Subject[]> {
-    const subject = await this.findOne(id);
+  async getPrerequisites(id: string, scope: ResolvedScope): Promise<Subject[]> {
+    const subject = await this.findOne(id, scope);
     return subject.prerequisites;
   }
 
-  async setPrerequisites(id: string, prerequisiteIds: string[]): Promise<Subject[]> {
-    const subject = await this.findOne(id);
-    const prerequisites = await this.loadPrerequisites(id, prerequisiteIds);
+  async setPrerequisites(
+    id: string,
+    prerequisiteIds: string[],
+    scope: ResolvedScope,
+  ): Promise<Subject[]> {
+    const subject = await this.findOne(id, scope);
+    const prerequisites = await this.loadPrerequisites(id, prerequisiteIds, scope);
     subject.prerequisites = prerequisites;
     const saved = await this.subjects.save(subject);
     return saved.prerequisites;
   }
 
-  async addPrerequisite(id: string, prerequisiteId: string): Promise<Subject[]> {
-    const subject = await this.findOne(id);
-    const [found] = await this.loadPrerequisites(id, [prerequisiteId]);
+  async addPrerequisite(
+    id: string,
+    prerequisiteId: string,
+    scope: ResolvedScope,
+  ): Promise<Subject[]> {
+    const subject = await this.findOne(id, scope);
+    const [found] = await this.loadPrerequisites(id, [prerequisiteId], scope);
     const existing = new Set(subject.prerequisites.map((p) => p.id));
     if (!existing.has(found.id)) {
       subject.prerequisites.push(found);
       await this.subjects.save(subject);
     }
-    return this.getPrerequisites(id);
+    return this.getPrerequisites(id, scope);
   }
 
-  async removePrerequisite(id: string, prerequisiteId: string): Promise<Subject[]> {
-    const subject = await this.findOne(id);
+  async removePrerequisite(
+    id: string,
+    prerequisiteId: string,
+    scope: ResolvedScope,
+  ): Promise<Subject[]> {
+    const subject = await this.findOne(id, scope);
     subject.prerequisites = subject.prerequisites.filter((p) => p.id !== prerequisiteId);
     await this.subjects.save(subject);
     return subject.prerequisites;
   }
 
-  private async loadPrerequisites(id: string, ids: string[]): Promise<Subject[]> {
+  private async getSubjectOrFail(id: string): Promise<Subject> {
+    const subject = await this.subjects.findOne({
+      where: { id },
+      relations: { program: true, prerequisites: true },
+    });
+    if (!subject) {
+      throw new NotFoundException('Subject not found');
+    }
+    return subject;
+  }
+
+  /**
+   * Enforce the caller's scope on a subject. Out-of-scope subjects surface as 404
+   * (not 403) so a manager cannot probe for the existence of other programs'
+   * subjects. Admins and students are unaffected.
+   */
+  private assertSubjectAccess(subject: ScopeSubject, scope: ResolvedScope): void {
+    if (isManager(scope) && !scopeCanAccessSubject(scope, subject)) {
+      throw new NotFoundException('Subject not found');
+    }
+  }
+
+  /** A manager may only create inside their own program; the program is forced. */
+  private resolveCreateProgram(requested: string | undefined, scope: ResolvedScope): string | null {
+    if (!isManager(scope)) {
+      return requested ?? null;
+    }
+    if (scope.programId === null) {
+      throw new ForbiddenException('Manager account has no assigned academic program');
+    }
+    if (requested !== undefined && requested !== scope.programId) {
+      throw new ForbiddenException('Managers may only create subjects in their assigned program');
+    }
+    return scope.programId;
+  }
+
+  private applyScopeFilter(
+    qb: ReturnType<Repository<Subject>['createQueryBuilder']>,
+    scope: ResolvedScope,
+  ): void {
+    if (scope.role === UserRole.SUBJECT_MANAGER) {
+      if (scope.assignedSubjectIds.length === 0) {
+        qb.andWhere('1 = 0');
+        return;
+      }
+      qb.andWhere('subject.id IN (:...scopeSubjectIds)', {
+        scopeSubjectIds: scope.assignedSubjectIds,
+      });
+      return;
+    }
+    if (scope.role === UserRole.PROGRAM_MANAGER) {
+      if (scope.programId === null) {
+        qb.andWhere('1 = 0');
+        return;
+      }
+      qb.andWhere('subject.programId = :scopeProgramId', { scopeProgramId: scope.programId });
+    }
+  }
+
+  private async loadPrerequisites(
+    id: string,
+    ids: string[],
+    scope: ResolvedScope,
+  ): Promise<Subject[]> {
     const unique = [...new Set(ids)];
     if (unique.includes(id)) {
       throw new BadRequestException('A subject cannot be its own prerequisite');
@@ -159,6 +252,18 @@ export class SubjectsService {
     const found = await this.subjects.find({ where: { id: In(unique) } });
     if (found.length !== unique.length) {
       throw new BadRequestException('One or more prerequisite subjects do not exist');
+    }
+    if (isManager(scope)) {
+      // Prerequisites must themselves be subjects the manager is authorized to
+      // manage — otherwise a manager could use the prerequisite graph to reach a
+      // subject outside their scope.
+      for (const prerequisite of found) {
+        if (!scopeCanAccessSubject(scope, prerequisite)) {
+          throw new BadRequestException(
+            'A prerequisite must be a subject you are authorized to manage',
+          );
+        }
+      }
     }
     return found;
   }
