@@ -27,6 +27,14 @@ export class UserResponseDto {
   @ApiProperty({ nullable: true, example: 'SVU-2026-1234' })
   studentUniversityId!: string | null;
 
+  @ApiProperty({
+    nullable: true,
+    format: 'uuid',
+    example: null,
+    description: 'Academic program id, or null when the user has no program assigned.',
+  })
+  programId!: string | null;
+
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
 

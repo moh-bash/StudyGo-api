@@ -3,10 +3,13 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { AccountStatus, UserRole } from '../../common/enums.js';
+import { AcademicProgram } from '../../programs/entities/program.entity.js';
 
 @Entity('users')
 export class User {
@@ -40,6 +43,19 @@ export class User {
   @Index({ unique: true })
   @Column({ type: 'varchar', length: 50, nullable: true })
   studentUniversityId!: string | null;
+
+  /**
+   * Academic program the user belongs to. Nullable so legacy/undecided
+   * accounts exist without an assignment. One program per user — no join table.
+   * Deleting a program sets this back to NULL (never cascades to users).
+   */
+  @Index('IDX_users_program_id')
+  @Column({ type: 'uuid', nullable: true })
+  programId!: string | null;
+
+  @ManyToOne(() => AcademicProgram, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'programId' })
+  program?: AcademicProgram | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

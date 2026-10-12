@@ -16,6 +16,7 @@ import type { JwtPayload } from '../common/interfaces.js';
 import { isUniqueViolation } from '../common/utils/db.util.js';
 import { parseDurationToMs } from '../common/utils/duration.util.js';
 import { generateOpaqueToken, sha256 } from '../common/utils/hash.util.js';
+import { AcademicProgram } from '../programs/entities/program.entity.js';
 import { toUserResponse } from '../users/user.mapper.js';
 import { User } from '../users/entities/user.entity.js';
 import { AuthResponseDto, MessageResponseDto } from './dto/auth-response.dto.js';
@@ -38,6 +39,7 @@ export class AuthService {
     @InjectRepository(RefreshToken) private readonly refreshTokens: Repository<RefreshToken>,
     @InjectRepository(PasswordResetToken)
     private readonly resetTokens: Repository<PasswordResetToken>,
+    @InjectRepository(AcademicProgram) private readonly programs: Repository<AcademicProgram>,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly mail: MailService,
@@ -50,6 +52,10 @@ export class AuthService {
       throw new ConflictException('An account with this email already exists');
     }
 
+    // Program selection is validated server-side before the user is created so a
+    // rejected registration never leaves a partially created user behind.
+    const programId = dto.programId !== undefined ? await this.resolveEligibleProgram(dto.programId) : null;
+
     const user = this.users.create({
       fullName: dto.fullName.trim(),
       email,
@@ -58,6 +64,7 @@ export class AuthService {
       status: AccountStatus.ACTIVE,
       profileImageUrl: null,
       studentUniversityId: dto.studentUniversityId?.trim() || null,
+      programId,
     });
 
     try {
@@ -170,6 +177,19 @@ export class AuthService {
       throw new NotFoundException('User not found');
     }
     return toUserResponse(user);
+  }
+
+  /**
+   * Validates the client-supplied program identifier against the canonical
+   * server record. The client may never prove program identity by name — only
+   * the server-resolved id is trusted.
+   */
+  private async resolveEligibleProgram(programId: string): Promise<string> {
+    const program = await this.programs.findOne({ where: { id: programId } });
+    if (!program || !program.isActive) {
+      throw new BadRequestException('Selected academic program is not available');
+    }
+    return program.id;
   }
 
   private async issueTokens(user: User): Promise<{ accessToken: string; refreshToken: string }> {

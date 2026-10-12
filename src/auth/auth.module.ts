@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { getValidatedJwtConfig } from '../config/jwt.util.js';
+import { AcademicProgram } from '../programs/entities/program.entity.js';
 import { User } from '../users/entities/user.entity.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
@@ -13,16 +15,19 @@ import { JwtStrategy } from './strategies/jwt.strategy.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, RefreshToken, PasswordResetToken]),
+    TypeOrmModule.forFeature([User, RefreshToken, PasswordResetToken, AcademicProgram]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('jwt.accessSecret') ?? 'change-me',
-        signOptions: {
-          expiresIn: (config.get<string>('jwt.accessExpiresIn') ?? '15m') as unknown as number,
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const { secret, accessExpiresIn } = getValidatedJwtConfig(config);
+        return {
+          secret,
+          signOptions: {
+            expiresIn: accessExpiresIn as unknown as number,
+          },
+        };
+      },
     }),
   ],
   controllers: [AuthController],

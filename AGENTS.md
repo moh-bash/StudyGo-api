@@ -7,7 +7,7 @@ Backend for **StudyGO** (SVU university companion app). NestJS 12, TypeScript 6,
 - `src/common/` — shared DTOs, decorators, guards, filters, transformers, and pure utils (hashing, pagination, durations, grading, db helpers). Unit specs live beside source as `*.spec.ts`.
 - `test/` — e2e specs (`test/app.e2e-spec.ts` covers health, auth-gating, 404s).
 - `dist/` is build output from `nest build`; never treat it as source or edit it.
-- **No seed script exists.** `README` and `.env.example` reference `npm run seed`, but `package.json` defines none; `ADMIN_EMAIL`/`ADMIN_PASSWORD` are read into config and never consumed.
+- **No seed script exists.** `README`/`.env.example` may still reference `npm run seed`, but `package.json` defines none. The first System Admin is created at startup by `AdminBootstrapService` (`src/bootstrap/`) when `ADMIN_EMAIL` + `ADMIN_PASSWORD` are both set and no ADMIN exists yet — one-time, DB-authoritative, advisory-lock guarded, and **not** exposed over HTTP (see README). `JWT_ACCESS_SECRET` is validated at startup and insecure defaults are rejected.
 
 ## Critical toolchain quirks
 - **ESM.** `"type": "module"` + `nodenext`. Every relative import MUST include the `.js` extension (`import { X } from './x.service.js'`), even for `.ts` files. Omitting it breaks build and runtime.

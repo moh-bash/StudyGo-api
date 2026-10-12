@@ -8,6 +8,7 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -22,8 +23,11 @@ import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { UserRole } from '../common/enums.js';
 import { MessageResponseDto } from '../auth/dto/auth-response.dto.js';
+import { AcademicAssignmentsDto } from './dto/academic-assignments.dto.js';
+import { AssignProgramManagerDto } from './dto/assign-program-manager.dto.js';
 import { ChangePasswordDto } from './dto/change-password.dto.js';
 import { QueryUsersDto } from './dto/query-users.dto.js';
+import { SetSubjectManagersDto } from './dto/set-subject-managers.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { UserResponseDto } from './dto/user-response.dto.js';
@@ -98,5 +102,64 @@ export class UsersController {
   @ApiNoContentResponse()
   remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     return this.usersService.remove(id);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Get(':id/academic-assignments')
+  @ApiOperation({ summary: "Inspect a user's role and academic assignments (admin)" })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicAssignmentsDto })
+  getAcademicAssignments(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<AcademicAssignmentsDto> {
+    return this.usersService.getAcademicAssignments(id);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Put(':id/academic-assignments/program-manager')
+  @ApiOperation({ summary: 'Assign a Program Manager to their program (admin)' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicAssignmentsDto })
+  assignProgramManager(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: AssignProgramManagerDto,
+  ): Promise<AcademicAssignmentsDto> {
+    return this.usersService.assignProgramManager(id, dto.programId);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Delete(':id/academic-assignments/program-manager')
+  @ApiOperation({ summary: 'Remove a Program Manager assignment (admin)' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicAssignmentsDto })
+  removeProgramManager(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<AcademicAssignmentsDto> {
+    return this.usersService.removeProgramManager(id);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Put(':id/academic-assignments/subject-manager')
+  @ApiOperation({ summary: "Replace a user's Subject Manager assignments (admin)" })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicAssignmentsDto })
+  setSubjectManagers(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: SetSubjectManagersDto,
+  ): Promise<AcademicAssignmentsDto> {
+    return this.usersService.setSubjectManagers(id, dto.subjectIds);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Delete(':id/academic-assignments/subject-manager/:subjectId')
+  @ApiOperation({ summary: 'Remove a single Subject Manager assignment (admin)' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiParam({ name: 'subjectId', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicAssignmentsDto })
+  removeSubjectManager(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('subjectId', new ParseUUIDPipe()) subjectId: string,
+  ): Promise<AcademicAssignmentsDto> {
+    return this.usersService.removeSubjectManager(id, subjectId);
   }
 }

@@ -21,9 +21,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Roles } from '../common/decorators/roles.decorator.js';
+import { Public } from '../common/decorators/public.decorator.js';
 import { UserRole } from '../common/enums.js';
 import { CreateProgramDto } from './dto/create-program.dto.js';
 import { QueryProgramsDto } from './dto/query-programs.dto.js';
+import { RegistrationProgramDto } from './dto/registration-program.dto.js';
 import { UpdateProgramDto } from './dto/update-program.dto.js';
 import { AcademicProgram } from './entities/program.entity.js';
 import { ProgramsService } from './programs.service.js';
@@ -39,6 +41,20 @@ export class ProgramsController {
   @ApiOkResponse({ description: 'Paginated list of programs' })
   findAll(@Query() query: QueryProgramsDto) {
     return this.programsService.findAll(query);
+  }
+
+  @Public()
+  @Get('registration')
+  @ApiOperation({
+    summary: 'List active academic programs for registration (public)',
+    description:
+      'Unauthenticated. Returns only active programs, each with only `id`, `name`, and `code`, ' +
+      'for use as a registration dropdown. Inactive programs are always excluded and cannot be ' +
+      'included via query parameters.',
+  })
+  @ApiOkResponse({ type: [RegistrationProgramDto], description: 'Active programs available for registration' })
+  findForRegistration(): Promise<RegistrationProgramDto[]> {
+    return this.programsService.findActiveForRegistration();
   }
 
   @Get(':id')

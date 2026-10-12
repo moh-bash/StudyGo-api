@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d).+$/;
 
@@ -32,4 +40,14 @@ export class RegisterDto {
   @IsString()
   @MaxLength(50)
   studentUniversityId?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    example: '0ffacb93-5b0d-4ee6-9ba9-3b7b2b8c1f9a',
+    description:
+      'Existing academic program id. Optional — accounts may start without a program. When provided, the server validates that the program exists and is active.',
+  })
+  @IsOptional()
+  @IsUUID()
+  programId?: string;
 }

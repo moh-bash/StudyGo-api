@@ -6,7 +6,7 @@ Built with NestJS 12, TypeScript (strict), TypeORM, and PostgreSQL (Neon). ESM p
 
 ## Features
 
-- **Auth** — register, login, refresh/logout (hashed opaque refresh tokens), password reset (SMTP), JWT bearer access tokens with role-based guards.
+- **Auth** — register (with optional server-validated academic program selection), login, refresh/logout (hashed opaque refresh tokens), password reset (SMTP), JWT bearer access tokens with role-based guards.
 - **Catalog** — academic programs, semesters, subjects (with prerequisite graph + grading weights), professors, sections (with weekly schedules).
 - **Enrollment** — capacity + prerequisite checks, marks, credit-weighted GPA (grading scale is a **documented placeholder** — see below).
 - **Social/Personal** — study teams (memberships, join requests, privacy), personal tasks, shared academic events, per-user notifications.
@@ -26,7 +26,7 @@ npm install
 cp .env.example .env   # fill in DATABASE_URL, JWT_ACCESS_SECRET, etc.
 ```
 
-Required env vars: `DATABASE_URL` (Neon pooled endpoints usually need `DATABASE_SSL=true` and `DATABASE_SSL_REJECT_UNAUTHORIZED=false`), `JWT_ACCESS_SECRET`. `PORT` defaults to 3000. See `.env.example` for the full list. **Never commit or overwrite `.env`.**
+Required env vars: `DATABASE_URL` (Neon pooled endpoints usually need `DATABASE_SSL=true` and `DATABASE_SSL_REJECT_UNAUTHORIZED=false`), `JWT_ACCESS_SECRET` (required in every environment; the API refuses to start when it is missing, empty, a known insecure placeholder, or shorter than 32 characters — see `.env.example`). `PORT` defaults to 3000. See `.env.example` for the full list. **Never commit or overwrite `.env`.**
 
 Create the schema with the initial migration:
 
@@ -69,7 +69,17 @@ npm run migration:show
 - **Persistence:** explicit `entities`/`migrations` arrays (no globs) in the TypeORM options. `synchronize: false`. The `migrations` table holds `InitialSchema...` as the current baseline.
 - **Errors:** Postgres unique violations (SQLSTATE 23505) are mapped to 400-level `BadRequestException`; `AllExceptionsFilter` hides internal details in production.
 - **Grading scale (PLACEHOLDER):** SVU's official rules are not yet modelled. `src/common/utils/grading.util.ts` ships a documented A/B/C/D/F scale (90/80/70/60) used by marks → GPA conversion and the `DEFAULT_PASS_MARK` (60). Total mark = `projectMark * projectWeight/100 + examMark * examWeight/100`; subject weights must sum to 100. Replace this file when the official rules are confirmed — GPA behaviour is isolated there.
-- **Admin bootstrap:** `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars exist for first-admin seeding; the provider is wired through configuration but no seed script ships yet.
+- **Admin bootstrap:** the first System Admin is created **once** at application startup when `ADMIN_EMAIL` and `ADMIN_PASSWORD` are both set and no ADMIN exists yet. There is no HTTP endpoint. The credential is validated on the server (valid email, account password policy, must not reuse `JWT_ACCESS_SECRET`) and the one-time check runs inside a transaction guarded by a Postgres advisory lock, making it safe across concurrent startups. The database is authoritative: once any ADMIN exists, bootstrap is a permanent no-op even if the flags are left set. Remove both env vars after the first successful start.
+- **User ↔ program:** a user belongs to zero or one `AcademicProgram` (`users.programId`, nullable FK → `academic_programs(id)` `ON DELETE SET NULL`). Registration may pass an optional `programId`; the server validates the program exists **and** is active before creating the user. Admins can assign/clear a user's program via the existing admin-only `PATCH /api/v1/users/:id`. Regular users cannot change their own program through the profile endpoint.
+- **Public registration program list:** `GET /api/v1/programs/registration` is **unauthenticated** (the only public academic route) and returns the active programs available for registration selection, each with only `id`, `name`, and `code`. Inactive programs are always excluded and there is no query input to bypass the filter. Example response:
+
+  ```json
+  [
+    { "id": "2b7f1c1e-8a2d-4f5a-9f4e-1c2d3e4f5a6b", "name": "Information Technology", "code": "IT" }
+  ]
+  ```
+
+  The protected `GET /api/v1/programs` (paginated, any authenticated user) and the admin program-management routes are unchanged.
 
 ## License
 

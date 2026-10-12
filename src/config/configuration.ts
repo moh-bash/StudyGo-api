@@ -1,3 +1,5 @@
+import { resolveJwtAccessSecret } from './jwt.util.js';
+
 function toBool(value: string | undefined, fallback = false): boolean {
   if (value === undefined || value === '') {
     return fallback;
@@ -23,7 +25,7 @@ export const configuration = () => ({
     sslRejectUnauthorized: toBool(process.env.DATABASE_SSL_REJECT_UNAUTHORIZED),
   },
   jwt: {
-    accessSecret: process.env.JWT_ACCESS_SECRET ?? 'change-me',
+    accessSecret: resolveJwtAccessSecret(process.env.JWT_ACCESS_SECRET),
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN ?? '15m',
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
   },

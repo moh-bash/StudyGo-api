@@ -8,6 +8,20 @@
 export enum UserRole {
   STUDENT = 'STUDENT',
   ADMIN = 'ADMIN',
+  /** Manages exactly one academic program: the user's own `programId`. */
+  PROGRAM_MANAGER = 'PROGRAM_MANAGER',
+  /** Manages one or more subjects, each within the user's own `programId`. */
+  SUBJECT_MANAGER = 'SUBJECT_MANAGER',
+}
+
+/**
+ * Roles that carry an academic management scope and therefore require the user
+ * to have a non-null `programId`.
+ */
+export const MANAGER_ROLES: readonly UserRole[] = [UserRole.PROGRAM_MANAGER, UserRole.SUBJECT_MANAGER];
+
+export function isManagerRole(role: UserRole): boolean {
+  return MANAGER_ROLES.includes(role);
 }
 
 export enum AccountStatus {

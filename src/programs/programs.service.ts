@@ -6,6 +6,7 @@ import { isUniqueViolation } from '../common/utils/db.util.js';
 import { buildPaginatedResult, getSkip } from '../common/utils/pagination.util.js';
 import { CreateProgramDto } from './dto/create-program.dto.js';
 import { QueryProgramsDto } from './dto/query-programs.dto.js';
+import { RegistrationProgramDto } from './dto/registration-program.dto.js';
 import { UpdateProgramDto } from './dto/update-program.dto.js';
 import { AcademicProgram } from './entities/program.entity.js';
 
@@ -39,6 +40,23 @@ export class ProgramsService {
     qb.skip(getSkip(query.page, query.limit)).take(query.limit);
     const [data, total] = await qb.getManyAndCount();
     return buildPaginatedResult(data, total, query.page, query.limit);
+  }
+
+  /**
+   * Public registration projection: only active programs, only the fields a
+   * dropdown needs (`id`, `name`, `code`). Never exposes the full entity.
+   */
+  async findActiveForRegistration(): Promise<RegistrationProgramDto[]> {
+    const programs = await this.programs.find({
+      select: { id: true, name: true, code: true },
+      where: { isActive: true },
+      order: { name: 'ASC' },
+    });
+    return programs.map((program) => ({
+      id: program.id,
+      name: program.name,
+      code: program.code,
+    }));
   }
 
   async findOne(id: string): Promise<AcademicProgram> {
