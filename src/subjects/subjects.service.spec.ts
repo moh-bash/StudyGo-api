@@ -113,11 +113,11 @@ function createDto(overrides: Partial<CreateSubjectDto> = {}): CreateSubjectDto 
 }
 
 describe('SubjectsService.create', () => {
-  it('defaults weights to 0/100 when none are provided', async () => {
+  it('defaults weights to 25/75 when none are provided', async () => {
     const service = makeService();
     const saved = await service.create(createDto(), ADMIN_SCOPE);
-    expect(saved.projectWeight).toBe(0);
-    expect(saved.examWeight).toBe(100);
+    expect(saved.projectWeight).toBe(25);
+    expect(saved.examWeight).toBe(75);
     expect(saved.isActive).toBe(true);
     expect(saved.description).toBeNull();
     expect(saved.programId).toBeNull();

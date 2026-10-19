@@ -293,7 +293,9 @@ export class SubjectsService {
     examWeight?: number,
   ): { projectWeight: number; examWeight: number } {
     if (projectWeight === undefined && examWeight === undefined) {
-      return { projectWeight: 0, examWeight: 100 };
+      // Phase 3 default grading weights for newly configured subjects:
+      // 25% project + 75% exam (sums to 100, satisfying the check constraint).
+      return { projectWeight: 25, examWeight: 75 };
     }
     if (projectWeight === undefined || examWeight === undefined) {
       throw new BadRequestException('Provide both projectWeight and examWeight together');

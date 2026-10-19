@@ -51,10 +51,12 @@ export class Subject {
   @Column({ type: 'int' })
   creditHours!: number;
 
-  @Column({ type: 'numeric', precision: 5, scale: 2, default: 0, transformer: numericTransformer })
+  // Phase 3: default grading weights for newly created subjects are 25% project
+  // + 75% exam (still enforced to sum to 100 by CHK_subject_weights_total).
+  @Column({ type: 'numeric', precision: 5, scale: 2, default: 25, transformer: numericTransformer })
   projectWeight!: number;
 
-  @Column({ type: 'numeric', precision: 5, scale: 2, default: 100, transformer: numericTransformer })
+  @Column({ type: 'numeric', precision: 5, scale: 2, default: 75, transformer: numericTransformer })
   examWeight!: number;
 
   @Index()

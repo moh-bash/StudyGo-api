@@ -37,13 +37,25 @@ describe('migration registry', () => {
     expect(phoneIndex).toBeLessThan(subjectCodeIndex);
   });
 
-  it('registers SubjectCodeProgramScope exactly once and last', () => {
+  it('registers SubjectCodeProgramScope exactly once, before SubjectWeightDefaults', () => {
     const matches = MIGRATIONS.filter((m) => m.name === 'SubjectCodeProgramScope1792500000000');
     expect(matches).toHaveLength(1);
     const subjectCodeIndex = MIGRATIONS.findIndex(
       (m) => m.name === 'SubjectCodeProgramScope1792500000000',
     );
-    expect(subjectCodeIndex).toBe(MIGRATIONS.length - 1);
+    const weightDefaultsIndex = MIGRATIONS.findIndex(
+      (m) => m.name === 'SubjectWeightDefaults1792510000000',
+    );
+    expect(subjectCodeIndex).toBeLessThan(weightDefaultsIndex);
+  });
+
+  it('registers SubjectWeightDefaults exactly once and last', () => {
+    const matches = MIGRATIONS.filter((m) => m.name === 'SubjectWeightDefaults1792510000000');
+    expect(matches).toHaveLength(1);
+    const weightDefaultsIndex = MIGRATIONS.findIndex(
+      (m) => m.name === 'SubjectWeightDefaults1792510000000',
+    );
+    expect(weightDefaultsIndex).toBe(MIGRATIONS.length - 1);
   });
 
   it('exports a class whose name embeds the migration timestamp', () => {
@@ -55,5 +67,31 @@ describe('migration registry', () => {
   it('lists migrations as constructable classes (no duplicates by identity)', () => {
     const unique = new Set(MIGRATIONS);
     expect(unique.size).toBe(MIGRATIONS.length);
+  });
+
+  it('SubjectWeightDefaults only changes column defaults (25/75 up, 0/100 down)', async () => {
+    const { SubjectWeightDefaults1792510000000 } = await import(
+      './1792510000000-SubjectWeightDefaults.js'
+    );
+    const migration = new SubjectWeightDefaults1792510000000();
+    const statements: string[] = [];
+    const queryRunner = {
+      query: async (sql: string) => {
+        statements.push(sql);
+      },
+    } as unknown as Parameters<typeof migration.up>[0];
+
+    await migration.up(queryRunner);
+    expect(statements).toEqual([
+      'ALTER TABLE "subjects" ALTER COLUMN "projectWeight" SET DEFAULT 25',
+      'ALTER TABLE "subjects" ALTER COLUMN "examWeight" SET DEFAULT 75',
+    ]);
+
+    statements.length = 0;
+    await migration.down(queryRunner);
+    expect(statements).toEqual([
+      'ALTER TABLE "subjects" ALTER COLUMN "projectWeight" SET DEFAULT 0',
+      'ALTER TABLE "subjects" ALTER COLUMN "examWeight" SET DEFAULT 100',
+    ]);
   });
 });

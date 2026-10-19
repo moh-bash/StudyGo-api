@@ -65,10 +65,10 @@ export class CatalogSubjectDto {
   @ApiProperty({ example: 3 })
   creditHours!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ example: 25 })
   projectWeight!: number;
 
-  @ApiProperty({ example: 100 })
+  @ApiProperty({ example: 75 })
   examWeight!: number;
 
   @ApiProperty({

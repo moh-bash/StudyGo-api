@@ -44,10 +44,11 @@ export class CreateSubjectDto {
   creditHours!: number;
 
   @ApiPropertyOptional({
-    example: 40,
+    example: 25,
     minimum: 0,
     maximum: 100,
-    description: 'Project weight. Must be provided together with examWeight and sum to 100.',
+    description:
+      'Project weight. Defaults to 25 when omitted. Must be provided together with examWeight and sum to 100.',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -56,10 +57,11 @@ export class CreateSubjectDto {
   projectWeight?: number;
 
   @ApiPropertyOptional({
-    example: 60,
+    example: 75,
     minimum: 0,
     maximum: 100,
-    description: 'Exam weight. Must be provided together with projectWeight and sum to 100.',
+    description:
+      'Exam weight. Defaults to 75 when omitted. Must be provided together with projectWeight and sum to 100.',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
