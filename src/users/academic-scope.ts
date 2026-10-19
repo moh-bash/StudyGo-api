@@ -115,3 +115,26 @@ export function canAccessSubject(
 export function scopeCanAccessSubject(scope: ResolvedScope, subject: ScopeSubject): boolean {
   return canAccessSubject(scope, subject, scope.assignedSubjectIds);
 }
+
+// --- Semester scope (read/manage boundary for the term catalog) ---
+
+/**
+ * A semester belongs to exactly one academic program. Only an Admin may see or
+ * manage semesters of every program; every other role (student or manager) may
+ * only reach semesters of their own program. A user with no program reaches
+ * nothing — permissions are never silently broadened.
+ */
+export function canAccessSemester(
+  user: Pick<ScopeUser, 'role' | 'programId'>,
+  semesterProgramId: string,
+): boolean {
+  if (user.role === UserRole.ADMIN) {
+    return true;
+  }
+  return user.programId !== null && user.programId === semesterProgramId;
+}
+
+/** Convenience wrapper evaluating a resolved request scope against a semester. */
+export function scopeCanAccessSemester(scope: ResolvedScope, semesterProgramId: string): boolean {
+  return canAccessSemester(scope, semesterProgramId);
+}

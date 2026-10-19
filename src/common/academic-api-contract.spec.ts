@@ -114,15 +114,21 @@ describe('academic API contract (controller metadata)', () => {
     expect(find(routes, RequestMethod.DELETE, 'removePrerequisite').roles).toEqual(MANAGERS);
   });
 
-  it('semesters and professors: reads open, writes admin-only', () => {
-    for (const controller of [SemestersController, ProfessorsController]) {
-      const routes = readRoutes(controller);
-      expect(find(routes, RequestMethod.GET, 'findAll').roles).toBeUndefined();
-      expect(find(routes, RequestMethod.GET, 'findOne').roles).toBeUndefined();
-      expect(find(routes, RequestMethod.POST, 'create').roles).toEqual(ADMIN);
-      expect(find(routes, RequestMethod.PATCH, 'update').roles).toEqual(ADMIN);
-      expect(find(routes, RequestMethod.DELETE, 'remove').roles).toEqual(ADMIN);
-    }
+  it('semesters: writes allow admin + program manager (program scope in service); professors writes stay admin-only', () => {
+    const SEMESTER_MANAGERS = [UserRole.ADMIN, UserRole.PROGRAM_MANAGER];
+    const semesterRoutes = readRoutes(SemestersController);
+    expect(find(semesterRoutes, RequestMethod.GET, 'findAll').roles).toBeUndefined();
+    expect(find(semesterRoutes, RequestMethod.GET, 'findOne').roles).toBeUndefined();
+    expect(find(semesterRoutes, RequestMethod.POST, 'create').roles).toEqual(SEMESTER_MANAGERS);
+    expect(find(semesterRoutes, RequestMethod.PATCH, 'update').roles).toEqual(SEMESTER_MANAGERS);
+    expect(find(semesterRoutes, RequestMethod.DELETE, 'remove').roles).toEqual(SEMESTER_MANAGERS);
+
+    const professorRoutes = readRoutes(ProfessorsController);
+    expect(find(professorRoutes, RequestMethod.GET, 'findAll').roles).toBeUndefined();
+    expect(find(professorRoutes, RequestMethod.GET, 'findOne').roles).toBeUndefined();
+    expect(find(professorRoutes, RequestMethod.POST, 'create').roles).toEqual(ADMIN);
+    expect(find(professorRoutes, RequestMethod.PATCH, 'update').roles).toEqual(ADMIN);
+    expect(find(professorRoutes, RequestMethod.DELETE, 'remove').roles).toEqual(ADMIN);
   });
 
   it('sections: reads open; section and schedule writes allow admin + managers (scope in service)', () => {

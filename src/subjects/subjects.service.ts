@@ -192,10 +192,22 @@ export class SubjectsService {
   /**
    * Enforce the caller's scope on a subject. Out-of-scope subjects surface as 404
    * (not 403) so a manager cannot probe for the existence of other programs'
-   * subjects. Admins and students are unaffected.
+   * subjects, and a student cannot read another specialization's subjects. Admins
+   * are unaffected.
    */
   private assertSubjectAccess(subject: ScopeSubject, scope: ResolvedScope): void {
-    if (isManager(scope) && !scopeCanAccessSubject(scope, subject)) {
+    if (scope.role === UserRole.ADMIN) {
+      return;
+    }
+    if (isManager(scope)) {
+      if (!scopeCanAccessSubject(scope, subject)) {
+        throw new NotFoundException('Subject not found');
+      }
+      return;
+    }
+    // Students may only read subjects of their own academic program. A student
+    // with no program (or a subject with no program) reaches nothing.
+    if (scope.programId === null || subject.programId !== scope.programId) {
       throw new NotFoundException('Subject not found');
     }
   }
@@ -234,7 +246,15 @@ export class SubjectsService {
         return;
       }
       qb.andWhere('subject.programId = :scopeProgramId', { scopeProgramId: scope.programId });
+      return;
     }
+    // Students: the read scope is exactly their own academic program. A student
+    // with no program sees an empty catalog — never every program's subjects.
+    if (scope.programId === null) {
+      qb.andWhere('1 = 0');
+      return;
+    }
+    qb.andWhere('subject.programId = :scopeProgramId', { scopeProgramId: scope.programId });
   }
 
   private async loadPrerequisites(
@@ -296,7 +316,10 @@ export class SubjectsService {
       return await this.subjects.save(subject);
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new BadRequestException('A subject with this code already exists');
+        // Subject code uniqueness is scoped to the specialization (partial
+        // unique index on (programId, code)); the same code may exist in
+        // another program.
+        throw new BadRequestException('A subject with this code already exists in this specialization');
       }
       throw error;
     }

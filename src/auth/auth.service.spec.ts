@@ -139,6 +139,19 @@ describe('AuthService.register', () => {
     expect(result.user.studentUniversityId).toBeNull();
   });
 
+  it('stores a validated optional phone number', async () => {
+    const { service, created } = makeService({ program: makeProgram() });
+    await service.register(registerDto({ programId: PROGRAM_ID, phone: '+963 912 345 678' }));
+    expect(created[0].phone).toBe('+963 912 345 678');
+    expect(created[0].role).toBe(UserRole.STUDENT);
+  });
+
+  it('stores null phone when the optional field is omitted', async () => {
+    const { service, created } = makeService({ program: makeProgram() });
+    await service.register(registerDto({ programId: PROGRAM_ID }));
+    expect(created[0].phone ?? null).toBeNull();
+  });
+
   it('rejects registration with a nonexistent program', async () => {
     const { service } = makeService({ program: null });
     await expect(service.register(registerDto({ programId: PROGRAM_ID }))).rejects.toBeInstanceOf(

@@ -67,7 +67,7 @@ function makeService(program: AcademicProgram | null = programA()): Fixture {
 
   const owner = { id: STUDENT.id, program } as unknown as User;
   const subjects = [
-    subject({ id: 'sub-a1', code: 'A1', programId: PROGRAM_A, prerequisites: [{ id: 'sub-a2' }] }),
+    subject({ id: 'sub-a1', code: 'A1', programId: PROGRAM_A, prerequisites: [{ id: 'sub-a2' } as any] }),
     subject({ id: 'sub-a2', code: 'A2', programId: PROGRAM_A }),
     subject({ id: 'sub-a-inactive', code: 'A3', programId: PROGRAM_A, isActive: false }),
     subject({ id: 'sub-b1', code: 'B1', programId: PROGRAM_B }),
@@ -99,11 +99,11 @@ function makeService(program: AcademicProgram | null = programA()): Fixture {
 
   const service = new CatalogService(
     repo([owner], calls, 'users'),
-    repo(subjects, calls, 'subjects') as unknown as Repository<Subject>,
-    repo(semesters, calls, 'semesters') as unknown as Repository<Semester>,
-    repo(sections, calls, 'sections') as unknown as Repository<AcademicSection>,
-    repo(professors, calls, 'professors') as unknown as Repository<Professor>,
-    repo(schedules, calls, 'schedules') as unknown as Repository<SectionSchedule>,
+    repo(subjects as any, calls, 'subjects') as unknown as Repository<Subject>,
+    repo(semesters as any, calls, 'semesters') as unknown as Repository<Semester>,
+    repo(sections as any, calls, 'sections') as unknown as Repository<AcademicSection>,
+    repo(professors as any, calls, 'professors') as unknown as Repository<Professor>,
+    repo(schedules as any, calls, 'schedules') as unknown as Repository<SectionSchedule>,
   );
 
   return { service, calls };

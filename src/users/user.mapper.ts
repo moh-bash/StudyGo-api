@@ -11,6 +11,7 @@ export function toUserResponse(user: User): UserResponseDto {
     status: user.status,
     profileImageUrl: user.profileImageUrl,
     studentUniversityId: user.studentUniversityId,
+    phone: user.phone ?? null,
     programId: user.programId ?? null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,

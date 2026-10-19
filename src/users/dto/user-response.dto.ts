@@ -29,6 +29,13 @@ export class UserResponseDto {
 
   @ApiProperty({
     nullable: true,
+    example: '+963 912 345 678',
+    description: 'Optional contact phone number, or null when not provided.',
+  })
+  phone!: string | null;
+
+  @ApiProperty({
+    nullable: true,
     format: 'uuid',
     example: null,
     description: 'Academic program id, or null when the user has no program assigned.',

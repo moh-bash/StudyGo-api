@@ -8,10 +8,13 @@ const pipe = new ValidationPipe({
   transform: true,
 });
 
+const PROGRAM_ID = '0ffacb93-5b0d-4ee6-9ba9-3b7b2b8c1f9a';
+
 const VALID_BODY = {
   fullName: 'Layla Haddad',
   email: 'layla@example.com',
   password: 'Str0ngPass',
+  programId: PROGRAM_ID,
 };
 
 async function transform(body: Record<string, unknown>): Promise<RegisterDto> {
@@ -19,16 +22,27 @@ async function transform(body: Record<string, unknown>): Promise<RegisterDto> {
 }
 
 describe('RegisterDto', () => {
-  it('accepts a valid payload without a program', async () => {
+  it('accepts a valid payload with a program and no phone', async () => {
     const dto = await transform(VALID_BODY);
     expect(dto.fullName).toBe(VALID_BODY.fullName);
-    expect(dto.programId).toBeUndefined();
+    expect(dto.programId).toBe(PROGRAM_ID);
+    expect(dto.phone).toBeUndefined();
   });
 
-  it('accepts an optional well-formed programId', async () => {
-    const programId = '0ffacb93-5b0d-4ee6-9ba9-3b7b2b8c1f9a';
-    const dto = await transform({ ...VALID_BODY, programId });
-    expect(dto.programId).toBe(programId);
+  it('requires a programId (specialization is a required registration field)', async () => {
+    const { programId: _omitted, ...withoutProgram } = VALID_BODY;
+    await expect(transform(withoutProgram)).rejects.toThrow();
+  });
+
+  it('accepts an optional well-formed phone number', async () => {
+    const dto = await transform({ ...VALID_BODY, phone: '+963 912-345.678' });
+    expect(dto.phone).toBe('+963 912-345.678');
+  });
+
+  it('rejects a malformed phone number', async () => {
+    await expect(transform({ ...VALID_BODY, phone: 'not-a-phone' })).rejects.toThrow();
+    await expect(transform({ ...VALID_BODY, phone: '12' })).rejects.toThrow();
+    await expect(transform({ ...VALID_BODY, phone: '+963 call-me' })).rejects.toThrow();
   });
 
   it('rejects a malformed programId', async () => {

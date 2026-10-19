@@ -44,6 +44,10 @@ export class User {
   @Column({ type: 'varchar', length: 50, nullable: true })
   studentUniversityId!: string | null;
 
+  /** Optional contact phone number. Never used for authentication. */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  phone!: string | null;
+
   /**
    * Academic program the user belongs to. Nullable so legacy/undecided
    * accounts exist without an assignment. One program per user — no join table.

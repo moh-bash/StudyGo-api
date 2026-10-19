@@ -1,10 +1,11 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
 import { describe, expect, it } from 'vitest';
 import { AccountStatus, UserRole } from '../common/enums.js';
 import { RefreshToken } from '../auth/entities/refresh-token.entity.js';
 import { AcademicProgram } from '../programs/entities/program.entity.js';
 import { Subject } from '../subjects/entities/subject.entity.js';
+import type { CreateUserDto } from './dto/create-user.dto.js';
 import type { UpdateProfileDto } from './dto/update-profile.dto.js';
 import type { UpdateUserDto } from './dto/update-user.dto.js';
 import { SubjectManagerAssignment } from './entities/subject-manager-assignment.entity.js';
@@ -29,6 +30,8 @@ function makeUser(overrides: Partial<User> = {}): User {
 
 interface ServiceOverrides {
   user?: User;
+  /** What the email lookup returns in `create()` (defaults to "not found"). */
+  existing?: User | null;
   program?: AcademicProgram | null;
   subjects?: Subject[];
 }
@@ -37,7 +40,8 @@ function makeService(overrides: ServiceOverrides = {}) {
   const stored = overrides.user ?? makeUser();
   let saved: User | undefined;
   const users = {
-    findOne: async () => stored,
+    findOne: async () => ('existing' in overrides ? overrides.existing : stored),
+    create: (data: Record<string, unknown>) => ({ ...data }) as unknown as User,
     save: async (user: User) => {
       saved = user;
       return user;
@@ -110,5 +114,65 @@ describe('UsersService.updateMe (self)', () => {
     const { service } = makeService({ user: makeUser({ programId: PROGRAM_ID }) });
     const result = await service.findMe('user-1');
     expect(result.programId).toBe(PROGRAM_ID);
+  });
+});
+
+describe('UsersService.create (admin)', () => {
+  function createDto(overrides: Partial<CreateUserDto> = {}): CreateUserDto {
+    return {
+      fullName: 'Layla Haddad',
+      email: 'Layla@Example.COM',
+      password: 'Str0ngPass',
+      ...overrides,
+    } as CreateUserDto;
+  }
+
+  it('creates an ACTIVE student by default and associates the program', async () => {
+    const { service, getSaved } = makeService({
+      existing: null,
+      program: { id: PROGRAM_ID, name: 'CS', isActive: false } as AcademicProgram,
+    });
+    const result = await service.create(createDto({ programId: PROGRAM_ID }));
+
+    expect(result.role).toBe(UserRole.STUDENT);
+    expect(result.status).toBe(AccountStatus.ACTIVE);
+    expect(result.programId).toBe(PROGRAM_ID);
+    expect(result.email).toBe('layla@example.com'); // normalized
+    expect(result).not.toHaveProperty('passwordHash');
+    expect(getSaved()?.role).toBe(UserRole.STUDENT);
+    expect(getSaved()?.status).toBe(AccountStatus.ACTIVE);
+  });
+
+  it('creates an account without a program when none is supplied', async () => {
+    const { service, getSaved } = makeService({ existing: null });
+    const result = await service.create(createDto());
+    expect(result.programId).toBeNull();
+    expect(getSaved()?.programId).toBeNull();
+  });
+
+  it('rejects a duplicate email with a conflict', async () => {
+    const { service } = makeService({ existing: makeUser() });
+    await expect(service.create(createDto())).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('rejects an unknown program', async () => {
+    const { service } = makeService({ existing: null, program: null });
+    await expect(service.create(createDto({ programId: PROGRAM_ID }))).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('never creates manager roles through the ordinary create endpoint', async () => {
+    for (const role of [UserRole.PROGRAM_MANAGER, UserRole.SUBJECT_MANAGER]) {
+      const { service, getSaved } = makeService({ existing: null });
+      await expect(service.create(createDto({ role }))).rejects.toBeInstanceOf(BadRequestException);
+      expect(getSaved()).toBeUndefined();
+    }
+  });
+
+  it('allows the admin role through creation when explicitly requested', async () => {
+    const { service } = makeService({ existing: null });
+    const result = await service.create(createDto({ role: UserRole.ADMIN }));
+    expect(result.role).toBe(UserRole.ADMIN);
   });
 });

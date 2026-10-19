@@ -64,6 +64,7 @@ export class AuthService {
       status: AccountStatus.ACTIVE,
       profileImageUrl: null,
       studentUniversityId: dto.studentUniversityId?.trim() || null,
+      phone: dto.phone?.trim() || null,
       programId,
     });
 
@@ -128,7 +129,10 @@ export class AuthService {
   /**
    * Revokes the supplied refresh token. Access tokens are short-lived and
    * stateless, so they remain valid until expiry; refresh is the durable
-   * credential and is what logout actually invalidates.
+   * credential and is what logout actually invalidates. The route is public and
+   * keyed on refresh-token possession, so revocation also works after the
+   * access token has expired. Revoking an unknown/already-revoked token is a
+   * no-op that still returns success (idempotent, no information leak).
    */
   async logout(dto: RefreshTokenDto): Promise<MessageResponseDto> {
     await this.refreshTokens.update(

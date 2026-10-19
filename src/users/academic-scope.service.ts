@@ -25,18 +25,27 @@ export class AcademicScopeService {
   ) {}
 
   async resolve(actor: AuthenticatedUser): Promise<ResolvedScope> {
-    // Non-manager roles carry no academic management scope. The JWT strategy has
-    // already re-read their role/status from the DB this request, so we can trust
-    // it without a second lookup.
-    if (actor.role === UserRole.ADMIN || actor.role === UserRole.STUDENT) {
+    // Admins are unrestricted: no lookup needed. (The JWT strategy has already
+    // re-read the role/status from the DB this request.)
+    if (actor.role === UserRole.ADMIN) {
       return { userId: actor.id, role: actor.role, programId: null, assignedSubjectIds: [] };
     }
-    // Managers: read the live program and explicit subject assignments. Using the
-    // freshly-read role (not `actor.role`) means a downgraded account immediately
-    // loses even this lookup.
+    // Students and managers: read the live program (and subject assignments for
+    // Subject Managers) from the database. A student's read scope is exactly
+    // their own academic program (`User.programId`) — never a client-supplied
+    // program id. Using the freshly-read role (not `actor.role`) means a
+    // downgraded account immediately loses even this lookup.
     const user = await this.users.findOne({ where: { id: actor.id } });
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+    if (user.role === UserRole.STUDENT) {
+      return {
+        userId: user.id,
+        role: user.role,
+        programId: user.programId ?? null,
+        assignedSubjectIds: [],
+      };
     }
     let assignedSubjectIds: string[] = [];
     if (user.role === UserRole.SUBJECT_MANAGER) {

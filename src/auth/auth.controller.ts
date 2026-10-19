@@ -59,10 +59,20 @@ export class AuthController {
     return this.authService.refresh(dto);
   }
 
-  @ApiBearerAuth('access-token')
+  /**
+   * Revokes the supplied refresh token.
+   *
+   * Deliberately `@Public()`: logout is authorized by *possession of the
+   * refresh token* (the same credential `POST /auth/refresh` accepts), so a
+   * long-idle session whose 15-minute access token has already expired can
+   * still invalidate its durable server-side session. A missing/invalid bearer
+   * header is simply ignored; rate limiting (30/min) bounds abuse.
+   */
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @Post('logout')
-  @ApiOperation({ summary: 'Revoke a refresh token' })
+  @ApiOperation({ summary: 'Revoke a refresh token (no valid access token required)' })
   @ApiOkResponse({ type: MessageResponseDto })
   logout(@Body() dto: RefreshTokenDto): Promise<MessageResponseDto> {
     return this.authService.logout(dto);

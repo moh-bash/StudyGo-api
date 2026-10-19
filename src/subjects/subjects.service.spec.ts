@@ -58,6 +58,20 @@ function makeSubject(overrides: Partial<Subject> = {}): Subject {
   } as Subject;
 }
 
+/** Minimal query-builder recorder asserting which filters findAll applies. */
+function makeQbHarness() {
+  const calls: string[] = [];
+  const qb: Record<string, unknown> = {};
+  for (const method of ['leftJoinAndSelect', 'andWhere', 'orderBy', 'skip', 'take']) {
+    qb[method] = (...args: unknown[]) => {
+      calls.push(`${method}:${typeof args[0] === 'string' ? args[0] : ''}`);
+      return qb;
+    };
+  }
+  qb.getManyAndCount = async () => [[], 0];
+  return { calls, qb };
+}
+
 interface ServiceOverrides {
   save?: (subject: Subject) => Promise<Subject>;
   programExists?: boolean;
@@ -67,20 +81,20 @@ interface ServiceOverrides {
 function makeService(overrides: ServiceOverrides = {}) {
   const stored = overrides.stored ?? [makeSubject()];
   const subjects: Partial<Repository<Subject>> = {
-    create: (data) => ({ ...data, prerequisites: [] }) as Subject,
-    save: async (subject) => overrides.save?.(subject as Subject) ?? subject,
-    findOne: async ({ where }) => {
+    create: ((data: any) => ({ ...data, prerequisites: [] }) as Subject) as any,
+    save: async (subject: any) => overrides.save?.(subject as Subject) ?? subject,
+    findOne: async ({ where }: any = {}) => {
       const id = (where as { id?: string }).id;
       return stored.find((s) => s.id === id) ?? null;
     },
-    find: async ({ where }) => {
+    find: async ({ where }: any = {}) => {
       const raw = (where as { id?: unknown }).id;
       const ids = Array.isArray((raw as { _value?: string[] })?._value)
         ? (raw as { _value: string[] })._value
         : [raw];
       return stored.filter((s) => ids.includes(s.id));
     },
-    remove: async (subject) => subject,
+    remove: async (subject: any) => subject,
   };
   const programs: Partial<Repository<AcademicProgram>> = {
     exists: async () => overrides.programExists ?? true,
@@ -178,6 +192,76 @@ describe('SubjectsService prerequisites', () => {
     const service = makeService({ stored: [makeSubject(), makeSubject({ id: OTHER_ID })] });
     const result = await service.setPrerequisites(SUBJECT_ID, [OTHER_ID, OTHER_ID], ADMIN_SCOPE);
     expect(result).toHaveLength(1);
+  });
+});
+
+describe('SubjectsService student scope (audit F-03)', () => {
+  const STUDENT_SCOPE: ResolvedScope = {
+    userId: 'stu-1',
+    role: UserRole.STUDENT,
+    programId: P_A,
+    assignedSubjectIds: [],
+  };
+  const UNPROGRAMMED_STUDENT: ResolvedScope = { ...STUDENT_SCOPE, programId: null };
+
+  it('allows a student to read a subject of their own program', async () => {
+    const service = makeService({ stored: [makeSubject({ id: SUBJECT_ID, programId: P_A })] });
+    const subject = await service.findOne(SUBJECT_ID, STUDENT_SCOPE);
+    expect(subject.id).toBe(SUBJECT_ID);
+  });
+
+  it('hides a subject of another specialization from a student (404, not 403)', async () => {
+    const service = makeService({ stored: [makeSubject({ id: SUBJECT_ID, programId: P_B })] });
+    await expect(service.findOne(SUBJECT_ID, STUDENT_SCOPE)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('hides an unprogrammed subject from every student', async () => {
+    const service = makeService({ stored: [makeSubject({ id: SUBJECT_ID, programId: null })] });
+    await expect(service.findOne(SUBJECT_ID, STUDENT_SCOPE)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('a student with no academic program reads nothing', async () => {
+    const service = makeService({ stored: [makeSubject({ id: SUBJECT_ID, programId: P_A })] });
+    await expect(service.findOne(SUBJECT_ID, UNPROGRAMMED_STUDENT)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('applies the program filter to a student list query (client filter cannot widen scope)', async () => {
+    const service = makeService();
+    const { calls, qb } = makeQbHarness();
+    (service as unknown as { subjects: { createQueryBuilder: () => unknown } }).subjects = {
+      createQueryBuilder: () => qb,
+    };
+    await service.findAll(
+      { page: 1, limit: 20, programId: P_B } as never,
+      STUDENT_SCOPE,
+    );
+    // The scope filter AND-combines with the client filter: the request stays
+    // pinned to the student's own program even when another is requested.
+    expect(calls.some((c) => c.includes('subject.programId = :scopeProgramId'))).toBe(true);
+    expect(calls.some((c) => c.includes('subject.programId = :programId'))).toBe(true);
+  });
+
+  it('empties the student list query when the student has no program', async () => {
+    const service = makeService();
+    const { calls, qb } = makeQbHarness();
+    (service as unknown as { subjects: { createQueryBuilder: () => unknown } }).subjects = {
+      createQueryBuilder: () => qb,
+    };
+    await service.findAll({ page: 1, limit: 20 } as never, UNPROGRAMMED_STUDENT);
+    expect(calls).toContainEqual('andWhere:1 = 0');
+  });
+
+  it('rejects a student attempting to read prerequisites of an out-of-scope subject', async () => {
+    const service = makeService({ stored: [makeSubject({ id: SUBJECT_ID, programId: P_B })] });
+    await expect(service.getPrerequisites(SUBJECT_ID, STUDENT_SCOPE)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 

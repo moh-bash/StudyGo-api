@@ -8,6 +8,7 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Post,
   Put,
   Query,
 } from '@nestjs/common';
@@ -26,6 +27,7 @@ import { MessageResponseDto } from '../auth/dto/auth-response.dto.js';
 import { AcademicAssignmentsDto } from './dto/academic-assignments.dto.js';
 import { AssignProgramManagerDto } from './dto/assign-program-manager.dto.js';
 import { ChangePasswordDto } from './dto/change-password.dto.js';
+import { CreateUserDto } from './dto/create-user.dto.js';
 import { QueryUsersDto } from './dto/query-users.dto.js';
 import { SetSubjectManagersDto } from './dto/set-subject-managers.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
@@ -64,6 +66,14 @@ export class UsersController {
     @Body() dto: ChangePasswordDto,
   ): Promise<MessageResponseDto> {
     return this.usersService.changePassword(userId, dto);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Post()
+  @ApiOperation({ summary: 'Create a user account (admin)' })
+  @ApiOkResponse({ type: UserResponseDto })
+  create(@Body() dto: CreateUserDto): Promise<UserResponseDto> {
+    return this.usersService.create(dto);
   }
 
   @Roles(UserRole.ADMIN)

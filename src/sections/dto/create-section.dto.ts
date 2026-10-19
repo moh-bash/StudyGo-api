@@ -11,10 +11,9 @@ export class CreateSectionDto {
   @IsUUID()
   subjectId!: string;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'Assigned professor (optional)' })
-  @IsOptional()
+  @ApiProperty({ format: 'uuid', description: 'Primary professor assigned to this class' })
   @IsUUID()
-  professorId?: string;
+  professorId!: string;
 
   @ApiProperty({ example: 'S1', maxLength: 50 })
   @IsString()

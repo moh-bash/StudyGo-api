@@ -1,17 +1,18 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import bcrypt from 'bcrypt';
 import { DataSource, In, Repository } from 'typeorm';
 import type { PaginatedResult } from '../common/interfaces.js';
 import { getSkip, buildPaginatedResult } from '../common/utils/pagination.util.js';
 import { isUniqueViolation } from '../common/utils/db.util.js';
-import { UserRole, isManagerRole } from '../common/enums.js';
+import { AccountStatus, UserRole, isManagerRole } from '../common/enums.js';
 import { RefreshToken } from '../auth/entities/refresh-token.entity.js';
 import { AcademicProgram } from '../programs/entities/program.entity.js';
 import { Subject } from '../subjects/entities/subject.entity.js';
 import { managedProgramId } from './academic-scope.js';
 import { AcademicAssignmentsDto } from './dto/academic-assignments.dto.js';
 import { ChangePasswordDto } from './dto/change-password.dto.js';
+import { CreateUserDto } from './dto/create-user.dto.js';
 import { QueryUsersDto } from './dto/query-users.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
@@ -84,6 +85,50 @@ export class UsersService {
 
   async findOne(id: string): Promise<UserResponseDto> {
     return toUserResponse(await this.getOrFail(id));
+  }
+
+  /**
+   * Admin-only account creation (dashboard "create user"). Never grants a
+   * manager role (defense-in-depth on top of the DTO's `@IsIn`), validates the
+   * program against the canonical record, and always creates the account
+   * `ACTIVE` — status changes go through `update()`.
+   */
+  async create(dto: CreateUserDto): Promise<UserResponseDto> {
+    if (dto.role !== undefined && isManagerRole(dto.role)) {
+      throw new BadRequestException(
+        'Assign PROGRAM_MANAGER/SUBJECT_MANAGER through the academic-assignments endpoints',
+      );
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const existing = await this.users.findOne({ where: { email } });
+    if (existing) {
+      throw new ConflictException('An account with this email already exists');
+    }
+
+    const programId = dto.programId !== undefined ? (await this.findProgram(dto.programId)).id : null;
+
+    const user = this.users.create({
+      fullName: dto.fullName.trim(),
+      email,
+      passwordHash: await bcrypt.hash(dto.password, BCRYPT_ROUNDS),
+      role: dto.role ?? UserRole.STUDENT,
+      status: AccountStatus.ACTIVE,
+      profileImageUrl: null,
+      studentUniversityId: dto.studentUniversityId?.trim() || null,
+      phone: dto.phone?.trim() || null,
+      programId,
+    });
+
+    try {
+      await this.users.save(user);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException('Email or student id is already in use');
+      }
+      throw error;
+    }
+    return toUserResponse(user);
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<UserResponseDto> {
@@ -328,6 +373,10 @@ export class UsersService {
     if (dto.studentUniversityId !== undefined) {
       const normalized = dto.studentUniversityId?.trim();
       user.studentUniversityId = normalized ? normalized : null;
+    }
+    if (dto.phone !== undefined) {
+      const normalized = dto.phone?.trim();
+      user.phone = normalized ? normalized : null;
     }
   }
 

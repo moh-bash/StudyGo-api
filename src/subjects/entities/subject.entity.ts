@@ -19,15 +19,23 @@ import { AcademicProgram } from '../../programs/entities/program.entity.js';
  * final mark between a project and an exam, and the two weights must sum to 100.
  * If more schemes are needed later, add an explicit `gradingScheme` entity rather
  * than overloading these columns.
+ *
+ * Uniqueness: a subject code is unique within its specialization (program), not
+ * globally — different specializations may reuse the same code for distinct
+ * subjects. Program-less subjects (legacy/deprecated) carry no uniqueness
+ * guarantee and are excluded from every catalog.
  */
 @Entity('subjects')
+@Index('UQ_subject_program_code', ['programId', 'code'], {
+  unique: true,
+  where: '"programId" IS NOT NULL',
+})
 @Check('CHK_subject_weights_non_negative', '"projectWeight" >= 0 AND "examWeight" >= 0')
 @Check('CHK_subject_weights_total', '"projectWeight" + "examWeight" = 100')
 export class Subject {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 20 })
   code!: string;
 

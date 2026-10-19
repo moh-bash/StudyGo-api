@@ -14,6 +14,7 @@ import { buildPaginatedResult, getSkip } from '../common/utils/pagination.util.j
 import { EnrollmentStatus, UserRole } from '../common/enums.js';
 import { AcademicSection } from '../sections/entities/section.entity.js';
 import { Subject } from '../subjects/entities/subject.entity.js';
+import { User } from '../users/entities/user.entity.js';
 import { CreateEnrollmentDto } from './dto/create-enrollment.dto.js';
 import { QueryEnrollmentsDto } from './dto/query-enrollments.dto.js';
 import { UpdateEnrollmentDto } from './dto/update-enrollment.dto.js';
@@ -43,6 +44,7 @@ export class EnrollmentsService {
     private readonly enrollments: Repository<StudentEnrollment>,
     @InjectRepository(AcademicSection) private readonly sections: Repository<AcademicSection>,
     @InjectRepository(Subject) private readonly subjects: Repository<Subject>,
+    @InjectRepository(User) private readonly users: Repository<User>,
   ) {}
 
   async create(actor: AuthenticatedUser, dto: CreateEnrollmentDto): Promise<StudentEnrollment> {
@@ -60,6 +62,23 @@ export class EnrollmentsService {
     }
     if (!section.isActive) {
       throw new BadRequestException('Section is not open for enrollment');
+    }
+    if (actor.role !== UserRole.ADMIN) {
+      // Narrow authorization fix (audit F-03): a student may only enroll in
+      // sections whose subject belongs to their own academic program. The
+      // program is re-read from the database, never trusted from the client.
+      const student = await this.users.findOne({ where: { id: studentId } });
+      const studentProgramId = student?.programId ?? null;
+      const subjectProgramId = section.subject?.programId ?? null;
+      if (
+        studentProgramId === null ||
+        subjectProgramId === null ||
+        studentProgramId !== subjectProgramId
+      ) {
+        throw new ForbiddenException(
+          'Students can only enroll in sections of their own academic program',
+        );
+      }
     }
 
     await this.assertCapacity(section);

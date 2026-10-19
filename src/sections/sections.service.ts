@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { PaginatedResult } from '../common/interfaces.js';
@@ -28,15 +28,24 @@ export class SectionsService {
   ) {}
 
   async create(dto: CreateSectionDto, scope: ResolvedScope): Promise<AcademicSection> {
-    await this.ensureSemester(dto.semesterId);
-    await this.assertSubjectAccess(dto.subjectId, scope);
-    if (dto.professorId) {
-      await this.ensureProfessor(dto.professorId);
+    if (scope.role === UserRole.STUDENT) {
+      // Defense-in-depth: the controller already restricts creation to admin and
+      // manager roles; the service refuses students outright as well.
+      throw new ForbiddenException('Students cannot create sections');
     }
+    if (!dto.professorId) {
+      // Every class has exactly one primary professor. Enforced here (not only
+      // in the DTO) so no internal caller can create a professor-less section.
+      throw new BadRequestException('A section requires a primary professor');
+    }
+    const semester = await this.loadSemester(dto.semesterId);
+    const subject = await this.assertSubjectAccess(dto.subjectId, scope);
+    this.assertProgramMatch(subject, semester);
+    await this.ensureProfessor(dto.professorId);
     const section = this.sections.create({
       semesterId: dto.semesterId,
       subjectId: dto.subjectId,
-      professorId: dto.professorId ?? null,
+      professorId: dto.professorId,
       code: dto.code.trim(),
       location: dto.location ?? null,
       deliveryMode: dto.deliveryMode ?? null,
@@ -88,7 +97,7 @@ export class SectionsService {
     if (!section) {
       throw new NotFoundException('Section not found');
     }
-    if (isManager(scope) && (!section.subject || !scopeCanAccessSubject(scope, section.subject))) {
+    if (!this.canReadSection(section, scope)) {
       throw new NotFoundException('Section not found');
     }
     const schedules = await this.schedules.find({
@@ -102,12 +111,22 @@ export class SectionsService {
     const section = await this.getOrFail(id);
     await this.assertSubjectAccess(section.subjectId, scope);
     if (dto.semesterId !== undefined) {
-      await this.ensureSemester(dto.semesterId);
+      await this.loadSemester(dto.semesterId);
       section.semesterId = dto.semesterId;
     }
     if (dto.subjectId !== undefined) {
       await this.assertSubjectAccess(dto.subjectId, scope);
       section.subjectId = dto.subjectId;
+    }
+    if (dto.semesterId !== undefined || dto.subjectId !== undefined) {
+      // Re-validate the final subject/semester pairing so no update can move a
+      // section into a subject-offering that spans two different programs.
+      const semester = await this.loadSemester(section.semesterId);
+      const subject = await this.subjects.findOne({ where: { id: section.subjectId } });
+      if (!subject) {
+        throw new NotFoundException('Section not found');
+      }
+      this.assertProgramMatch(subject, semester);
     }
     if (dto.professorId !== undefined) {
       if (dto.professorId) {
@@ -224,21 +243,63 @@ export class SectionsService {
 
   /**
    * Enforces the caller's scope against a subject id. Managers only reach their
-   * assigned program/subjects; out-of-scope ids surface as 404 so a manager
-   * cannot probe for sections of subjects they do not manage.
+   * assigned program/subjects; students only reach subjects of their own
+   * program; out-of-scope ids surface as 404 so a caller cannot probe for
+   * sections of subjects they may not access. Returns the loaded subject so
+   * callers can validate academic relationships (e.g. program match).
    */
-  private async assertSubjectAccess(subjectId: string, scope: ResolvedScope): Promise<void> {
+  private async assertSubjectAccess(subjectId: string, scope: ResolvedScope): Promise<Subject> {
     const subject = await this.subjects.findOne({ where: { id: subjectId } });
+    if (scope.role === UserRole.ADMIN) {
+      if (!subject) {
+        throw new BadRequestException('Subject not found');
+      }
+      return subject;
+    }
     if (isManager(scope)) {
       // Unknown and out-of-scope subjects both surface as 404 for managers so a
       // subject they do not manage cannot be probed for existence.
       if (!subject || !scopeCanAccessSubject(scope, subject)) {
         throw new NotFoundException('Section not found');
       }
-      return;
+      return subject;
     }
-    if (!subject) {
-      throw new BadRequestException('Subject not found');
+    // Students: only subjects of their own academic program are reachable.
+    if (!subject || scope.programId === null || subject.programId !== scope.programId) {
+      throw new NotFoundException('Section not found');
+    }
+    return subject;
+  }
+
+  /** Read boundary for one loaded section, derived through its subject. */
+  private canReadSection(
+    section: AcademicSection & { subject?: Subject | null },
+    scope: ResolvedScope,
+  ): boolean {
+    if (scope.role === UserRole.ADMIN) {
+      return true;
+    }
+    if (!section.subject) {
+      return false;
+    }
+    if (isManager(scope)) {
+      return scopeCanAccessSubject(scope, section.subject);
+    }
+    // Students may only read sections whose subject belongs to their program.
+    return scope.programId !== null && section.subject.programId === scope.programId;
+  }
+
+  /**
+   * A class is a subject offering inside one semester; the subject and the
+   * semester must belong to the same specialization, otherwise the section
+   * would belong to no coherent catalog.
+   */
+  private assertProgramMatch(subject: Subject, semester: Semester): void {
+    if (subject.programId === null) {
+      throw new BadRequestException('The subject does not belong to an academic program');
+    }
+    if (subject.programId !== semester.programId) {
+      throw new BadRequestException('The subject and the semester belong to different academic programs');
     }
   }
 
@@ -262,7 +323,15 @@ export class SectionsService {
         return;
       }
       qb.andWhere('subject.programId = :scopeProgramId', { scopeProgramId: scope.programId });
+      return;
     }
+    // Students: the read scope is exactly their own academic program. A student
+    // with no program sees an empty list — never other programs' sections.
+    if (scope.programId === null) {
+      qb.andWhere('1 = 0');
+      return;
+    }
+    qb.andWhere('subject.programId = :scopeProgramId', { scopeProgramId: scope.programId });
   }
 
   private assertTimeRange(start: string, end: string): void {
@@ -271,10 +340,12 @@ export class SectionsService {
     }
   }
 
-  private async ensureSemester(id: string): Promise<void> {
-    if (!(await this.semesters.exists({ where: { id } }))) {
+  private async loadSemester(id: string): Promise<Semester> {
+    const semester = await this.semesters.findOne({ where: { id } });
+    if (!semester) {
       throw new BadRequestException('Semester not found');
     }
+    return semester;
   }
 
   private async ensureProfessor(id: string): Promise<void> {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { UserRole } from '../common/enums.js';
 import {
+  canAccessSemester,
   canAccessSubject,
   canCreateSubject,
   canManageProgram,
@@ -9,6 +10,7 @@ import {
   isSubjectWithinProgram,
   managedProgramId,
   managerRoleRequiresProgram,
+  scopeCanAccessSemester,
   scopeCanAccessSubject,
 } from './academic-scope.js';
 
@@ -137,6 +139,34 @@ describe('academic-scope', () => {
       };
       expect(scopeCanAccessSubject(scope, { id: 'S-1', programId: 'P-A' })).toBe(true);
       expect(scopeCanAccessSubject(scope, { id: 'S-2', programId: 'P-A' })).toBe(false);
+    });
+  });
+
+  describe('canAccessSemester', () => {
+    it('is true for an admin regardless of the owning program', () => {
+      expect(canAccessSemester({ role: UserRole.ADMIN, programId: null }, 'P-A')).toBe(true);
+    });
+
+    it('is true for other roles only inside their own program', () => {
+      for (const role of [UserRole.STUDENT, UserRole.PROGRAM_MANAGER, UserRole.SUBJECT_MANAGER]) {
+        expect(canAccessSemester({ role, programId: 'P-A' }, 'P-A')).toBe(true);
+        expect(canAccessSemester({ role, programId: 'P-A' }, 'P-B')).toBe(false);
+      }
+    });
+
+    it('never broadens access for a user without a program', () => {
+      expect(canAccessSemester({ role: UserRole.STUDENT, programId: null }, 'P-A')).toBe(false);
+    });
+
+    it('scopeCanAccessSemester evaluates a resolved scope', () => {
+      const scope = {
+        userId: 'u1',
+        role: UserRole.PROGRAM_MANAGER,
+        programId: 'P-A',
+        assignedSubjectIds: [],
+      };
+      expect(scopeCanAccessSemester(scope, 'P-A')).toBe(true);
+      expect(scopeCanAccessSemester(scope, 'P-B')).toBe(false);
     });
   });
 });
