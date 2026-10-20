@@ -299,6 +299,17 @@ describe('Subject teams + admin (e2e)', () => {
     expect(res.body.slots).toHaveLength(3);
   });
 
+  it('serves the caller state endpoint with a planning sectionId', async () => {
+    // Regression: `mine` accepts the optional sectionId the mobile client sends.
+    const res = await http()
+      .get(`${base}/mine?subjectId=${subject.id}&semesterId=${semester.id}&sectionId=${sectionA.id}`)
+      .set(auth(creatorToken))
+      .expect(200);
+    expect(res.body.team.id).toBe(teamId);
+    expect(res.body.membershipSlotId).not.toBeNull();
+    expect(res.body.hasEligibleSection).toBe(true);
+  }, SLOW);
+
   // ---------------------------------------------------------------------------
   // Scope + visibility
   // ---------------------------------------------------------------------------
