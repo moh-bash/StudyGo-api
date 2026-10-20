@@ -11,6 +11,8 @@ import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { describe, expect, it } from 'vitest';
+import { AdminTeamsController } from './admin-teams.controller.js';
+import { AdminTeamsService } from './admin-teams.service.js';
 import { SubjectTeamsController } from './subject-teams.controller.js';
 import { SubjectTeamsService } from './subject-teams.service.js';
 import { TeamsController } from './teams.controller.js';
@@ -20,9 +22,10 @@ import { TeamsService } from './teams.service.js';
 const stub = {} as never;
 
 @Module({
-  controllers: [SubjectTeamsController, TeamsController],
+  controllers: [SubjectTeamsController, AdminTeamsController, TeamsController],
   providers: [
     { provide: SubjectTeamsService, useValue: stub },
+    { provide: AdminTeamsService, useValue: stub },
     { provide: TeamsService, useValue: stub },
   ],
 })
@@ -100,5 +103,30 @@ describe('subject-team route registration', () => {
     const paths = routes.map((route) => `${route.method} ${route.path}`);
     expect(paths).toContain('GET /teams/:id/members');
     expect(paths).toContain('GET /teams/me');
+  });
+
+  it('registers the administrator surface', async () => {
+    const routes = await collectRoutes();
+    const paths = routes.map((route) => `${route.method} ${route.path}`);
+    for (const expected of [
+      'GET /teams/admin',
+      'GET /teams/admin/stats',
+      'GET /teams/admin/count',
+    ]) {
+      expect(paths).toContain(expected);
+    }
+  });
+
+  it('registers the admin surface before the generic /teams/:id route', async () => {
+    const routes = await collectRoutes();
+    const genericIndex = routes.findIndex(
+      (route) => route.method === 'GET' && route.path === '/teams/:id',
+    );
+    const adminIndex = routes.findIndex(
+      (route) => route.method === 'GET' && route.path === '/teams/admin',
+    );
+    expect(adminIndex).toBeGreaterThanOrEqual(0);
+    expect(genericIndex).toBeGreaterThanOrEqual(0);
+    expect(adminIndex).toBeLessThan(genericIndex);
   });
 });

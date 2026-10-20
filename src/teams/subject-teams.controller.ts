@@ -76,12 +76,8 @@ export class SubjectTeamsController {
   @Roles(UserRole.STUDENT)
   @ApiOperation({ summary: 'List subject teams visible to the caller for a subject+term' })
   @ApiOkResponse({ description: 'Paginated list of eligible teams' })
-  list(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: QuerySubjectTeamsDto,
-    @Query('sectionId') sectionId?: string,
-  ) {
-    return this.subjectTeams.listTeams(user, query, sectionId);
+  list(@CurrentUser() user: AuthenticatedUser, @Query() query: QuerySubjectTeamsDto) {
+    return this.subjectTeams.listTeams(user, query, query.sectionId);
   }
 
   @Get(':id')

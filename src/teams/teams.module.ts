@@ -7,6 +7,8 @@ import { StudyTeam } from './entities/study-team.entity.js';
 import { TeamJoinRequest } from './entities/team-join-request.entity.js';
 import { TeamMembership } from './entities/team-membership.entity.js';
 import { TeamTaskSlot } from './entities/team-task-slot.entity.js';
+import { AdminTeamsController } from './admin-teams.controller.js';
+import { AdminTeamsService } from './admin-teams.service.js';
 import { SubjectTeamsController } from './subject-teams.controller.js';
 import { SubjectTeamsService } from './subject-teams.service.js';
 import { TeamsController } from './teams.controller.js';
@@ -24,8 +26,8 @@ import { TeamsService } from './teams.service.js';
       User,
     ]),
   ],
-  controllers: [SubjectTeamsController, TeamsController],
-  providers: [SubjectTeamsService, TeamsService],
-  exports: [SubjectTeamsService, TeamsService],
+  controllers: [SubjectTeamsController, AdminTeamsController, TeamsController],
+  providers: [SubjectTeamsService, AdminTeamsService, TeamsService],
+  exports: [SubjectTeamsService, AdminTeamsService, TeamsService],
 })
 export class TeamsModule {}
