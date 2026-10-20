@@ -307,6 +307,10 @@ export class SectionsService {
     qb: ReturnType<Repository<AcademicSection>['createQueryBuilder']>,
     scope: ResolvedScope,
   ): void {
+    // Admins read the whole catalog: no scoping filter at all.
+    if (scope.role === UserRole.ADMIN) {
+      return;
+    }
     if (scope.role === UserRole.SUBJECT_MANAGER) {
       if (scope.assignedSubjectIds.length === 0) {
         qb.andWhere('1 = 0');

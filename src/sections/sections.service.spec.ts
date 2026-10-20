@@ -17,6 +17,29 @@ const P_A = '00000000-0000-4000-8000-00000000000a';
 const P_B = '00000000-0000-4000-8000-00000000000b';
 const PROF = '00000000-0000-4000-8000-0000000000f1';
 
+/** Minimal query-builder recorder asserting which filters findAll applies. */
+function makeQbHarness() {
+  const calls: string[] = [];
+  const qb: Record<string, unknown> = {};
+  for (const method of ['leftJoinAndSelect', 'andWhere', 'orderBy', 'skip', 'take']) {
+    qb[method] = (...args: unknown[]) => {
+      calls.push(`${method}:${typeof args[0] === 'string' ? args[0] : ''}`);
+      return qb;
+    };
+  }
+  qb.getManyAndCount = async () => [[], 0];
+  return { calls, qb };
+}
+
+function makeListService() {
+  const service = makeService();
+  const { calls, qb } = makeQbHarness();
+  (service as unknown as { sections: { createQueryBuilder: () => unknown } }).sections = {
+    createQueryBuilder: () => qb,
+  };
+  return { service, calls };
+}
+
 const ADMIN_SCOPE: ResolvedScope = {
   userId: 'admin-1',
   role: UserRole.ADMIN,
@@ -190,6 +213,23 @@ describe('SectionsService scope enforcement', () => {
         subjectManagerScope([S_2]),
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('SectionsService admin scope (audit F-03 regression)', () => {
+  it('an admin list query is not restricted to any academic program', async () => {
+    const { service, calls } = makeListService();
+    await service.findAll({ page: 1, limit: 20 } as never, ADMIN_SCOPE);
+    // Regression: admins have programId === null, which must NOT fall through to
+    // the student branch and emit the always-empty filter.
+    expect(calls).not.toContainEqual('andWhere:1 = 0');
+    expect(calls.some((c) => c.includes(':scopeProgramId'))).toBe(false);
+  });
+
+  it('an admin list query is not restricted to assigned subjects', async () => {
+    const { service, calls } = makeListService();
+    await service.findAll({ page: 1, limit: 20 } as never, ADMIN_SCOPE);
+    expect(calls.some((c) => c.includes('scopeSubjectIds'))).toBe(false);
   });
 });
 

@@ -195,6 +195,22 @@ describe('SubjectsService prerequisites', () => {
   });
 });
 
+describe('SubjectsService admin scope (audit F-03 regression)', () => {
+  it('an admin list query is not restricted to any academic program', async () => {
+    const service = makeService();
+    const { calls, qb } = makeQbHarness();
+    (service as unknown as { subjects: { createQueryBuilder: () => unknown } }).subjects = {
+      createQueryBuilder: () => qb,
+    };
+    await service.findAll({ page: 1, limit: 20 } as never, ADMIN_SCOPE);
+    // Regression: admins have programId === null, which must NOT fall through to
+    // the student branch and emit the always-empty filter.
+    expect(calls).not.toContainEqual('andWhere:1 = 0');
+    expect(calls.some((c) => c.includes(':scopeProgramId'))).toBe(false);
+    expect(calls.some((c) => c.includes('scopeSubjectIds'))).toBe(false);
+  });
+});
+
 describe('SubjectsService student scope (audit F-03)', () => {
   const STUDENT_SCOPE: ResolvedScope = {
     userId: 'stu-1',
