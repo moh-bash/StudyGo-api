@@ -13,6 +13,7 @@ import { Subject } from '../subjects/entities/subject.entity.js';
 import { Task } from '../tasks/entities/task.entity.js';
 import { TeamJoinRequest } from '../teams/entities/team-join-request.entity.js';
 import { TeamMembership } from '../teams/entities/team-membership.entity.js';
+import { TeamTaskSlot } from '../teams/entities/team-task-slot.entity.js';
 import { SubjectManagerAssignment } from '../users/entities/subject-manager-assignment.entity.js';
 import { User } from '../users/entities/user.entity.js';
 
@@ -35,6 +36,7 @@ export const ENTITIES = [
   StudyTeam,
   TeamMembership,
   TeamJoinRequest,
+  TeamTaskSlot,
   Task,
   AcademicEvent,
   Notification,

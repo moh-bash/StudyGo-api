@@ -65,6 +65,33 @@ export enum JoinRequestStatus {
   CANCELLED = 'CANCELLED',
 }
 
+/**
+ * Eligibility scope of a Phase 5 subject team.
+ *
+ * - `SECTION`   — only students whose section is the team's originating section.
+ * - `PROFESSOR` — any section of the same subject taught by the same professor.
+ */
+export enum TeamScope {
+  SECTION = 'SECTION',
+  PROFESSOR = 'PROFESSOR',
+}
+
+/**
+ * How a team can be contacted outside the app. Exactly the three methods the
+ * Phase 5 specification allows — no plain-phone or WhatsApp-username variant.
+ */
+export enum TeamContactMethod {
+  WHATSAPP_PHONE = 'WHATSAPP_PHONE',
+  TELEGRAM = 'TELEGRAM',
+  GROUP_LINK = 'GROUP_LINK',
+}
+
+/** State of one task slot on a subject team. */
+export enum TeamTaskSlotState {
+  OPEN = 'OPEN',
+  JOINED = 'JOINED',
+}
+
 export enum TaskType {
   ASSIGNMENT = 'ASSIGNMENT',
   PROJECT = 'PROJECT',

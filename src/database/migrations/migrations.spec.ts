@@ -49,13 +49,25 @@ describe('migration registry', () => {
     expect(subjectCodeIndex).toBeLessThan(weightDefaultsIndex);
   });
 
-  it('registers SubjectWeightDefaults exactly once and last', () => {
+  it('registers SubjectWeightDefaults exactly once and before SubjectTeams', () => {
     const matches = MIGRATIONS.filter((m) => m.name === 'SubjectWeightDefaults1792510000000');
     expect(matches).toHaveLength(1);
     const weightDefaultsIndex = MIGRATIONS.findIndex(
       (m) => m.name === 'SubjectWeightDefaults1792510000000',
     );
-    expect(weightDefaultsIndex).toBe(MIGRATIONS.length - 1);
+    const subjectTeamsIndex = MIGRATIONS.findIndex(
+      (m) => m.name === 'SubjectTeams1792600000000',
+    );
+    expect(weightDefaultsIndex).toBeLessThan(subjectTeamsIndex);
+  });
+
+  it('registers SubjectTeams exactly once and last', () => {
+    const matches = MIGRATIONS.filter((m) => m.name === 'SubjectTeams1792600000000');
+    expect(matches).toHaveLength(1);
+    const subjectTeamsIndex = MIGRATIONS.findIndex(
+      (m) => m.name === 'SubjectTeams1792600000000',
+    );
+    expect(subjectTeamsIndex).toBe(MIGRATIONS.length - 1);
   });
 
   it('exports a class whose name embeds the migration timestamp', () => {
