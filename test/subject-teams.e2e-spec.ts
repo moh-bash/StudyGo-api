@@ -530,4 +530,54 @@ describe('Subject teams + admin (e2e)', () => {
     expect(res.body.totalTeams).toBe(await teamsRepo.count());
     expect(res.body.totalMembers).toBeGreaterThanOrEqual(3);
   });
+
+  // ---------------------------------------------------------------------------
+  // Team deletion + membership (creator only)
+  // ---------------------------------------------------------------------------
+
+  it('refuses to let an ordinary member delete the team', async () => {
+    // `joiner` is an accepted member of the team, not its creator.
+    await http().delete(`${base}/${teamId}`).set(auth(joinerToken)).expect(403);
+    // The team and its members are untouched.
+    expect(await teamsRepo.count({ where: { id: teamId } })).toBe(1);
+    expect(await membershipsRepo.count({ where: { teamId } })).toBe(3);
+  });
+
+  it('refuses to let an unrelated student delete the team', async () => {
+    await http().delete(`${base}/${teamId}`).set(auth(strangerToken)).expect(403);
+    expect(await teamsRepo.count({ where: { id: teamId } })).toBe(1);
+  });
+
+  it('lets a member leave the team and releases their task slot', async () => {
+    const before = await http().get(`${base}/${teamId}`).set(auth(creatorToken)).expect(200);
+    expect(before.body.memberCount).toBe(3);
+
+    await http().delete(`${base}/${teamId}/members/me`).set(auth(joinerToken)).expect(204);
+
+    const after = await http().get(`${base}/${teamId}`).set(auth(creatorToken)).expect(200);
+    expect(after.body.memberCount).toBe(2);
+    // The freed task slot is open again for another student.
+    const freed = after.body.slots.find(
+      (s: { memberId: string | null; state: string }) => s.memberId === null && s.state === 'OPEN',
+    );
+    expect(freed).toBeTruthy();
+    expect(await membershipsRepo.count({ where: { teamId, userId: joiner.id } })).toBe(0);
+    // The team itself survives the departure.
+    expect(await teamsRepo.count({ where: { id: teamId } })).toBe(1);
+  }, SLOW);
+
+  it('refuses to let the creator leave the team', async () => {
+    await http().delete(`${base}/${teamId}/members/me`).set(auth(creatorToken)).expect(400);
+    expect(await membershipsRepo.count({ where: { teamId, userId: creator.id } })).toBe(1);
+  });
+
+  it('lets the creator delete the team and removes every membership', async () => {
+    await http().delete(`${base}/${teamId}`).set(auth(creatorToken)).expect(204);
+    expect(await teamsRepo.count({ where: { id: teamId } })).toBe(0);
+    expect(await membershipsRepo.count({ where: { teamId } })).toBe(0);
+  }, SLOW);
+
+  it('reports an already deleted team as not found', async () => {
+    await http().delete(`${base}/${teamId}`).set(auth(creatorToken)).expect(404);
+  });
 });
