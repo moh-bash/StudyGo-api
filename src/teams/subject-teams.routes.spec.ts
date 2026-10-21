@@ -72,9 +72,20 @@ describe('subject-team route registration', () => {
       'GET /teams/subject/:id/join-requests',
       'PATCH /teams/subject/:id/join-requests/:requestId',
       'DELETE /teams/subject/:id/join-requests/:requestId',
+      'DELETE /teams/subject/:id/members/me',
+      'DELETE /teams/subject/:id',
     ]) {
       expect(paths).toContain(expected);
     }
+  });
+
+  it('never lets the generic /teams/:id delete shadow the subject-team delete', async () => {
+    const routes = await collectRoutes();
+    const paths = routes.map((route) => `${route.method} ${route.path}`);
+    // The subject surface must own `DELETE /teams/subject/:id`; the generic
+    // surface must not expose a competing delete on the same path.
+    expect(paths).toContain('DELETE /teams/subject/:id');
+    expect(paths).not.toContain('DELETE /teams/subject');
   });
 
   it('registers the subject surface before the generic /teams/:id routes', async () => {

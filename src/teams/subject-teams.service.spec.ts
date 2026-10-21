@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthenticatedUser } from '../common/interfaces.js';
@@ -14,9 +15,9 @@ import {
   TeamTaskSlotState,
   UserRole,
 } from '../common/enums.js';
-import type { AcademicSection } from '../sections/entities/section.entity.js';
-import type { Subject } from '../subjects/entities/subject.entity.js';
-import type { User } from '../users/entities/user.entity.js';
+import { AcademicSection } from '../sections/entities/section.entity.js';
+import { Subject } from '../subjects/entities/subject.entity.js';
+import { User } from '../users/entities/user.entity.js';
 import { StudyTeam } from './entities/study-team.entity.js';
 import { TeamJoinRequest } from './entities/team-join-request.entity.js';
 import { TeamMembership } from './entities/team-membership.entity.js';
@@ -50,24 +51,27 @@ function section(over: Partial<AcademicSection> = {}): AcademicSection {
   } as AcademicSection;
 }
 
+/** Exact-match comparison used by the in-memory repositories. */
+function matchesWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, v]) => row[k] === v);
+}
+
 /** Minimal in-memory stand-in for a TypeORM repository. */
 function fakeRepo<T extends { id?: string }>(rows: T[] = []) {
   let store = rows.map((r) => ({ ...r }));
-  const matches = (row: Record<string, unknown>, where: Record<string, unknown>) =>
-    Object.entries(where).every(([k, v]) => row[k] === v);
 
   const repo = {
     find: vi.fn(async (arg?: { where?: Record<string, unknown> }) =>
-      arg?.where ? store.filter((r) => matches(r as never, arg.where!)) : [...store],
+      arg?.where ? store.filter((r) => matchesWhere(r as never, arg.where!)) : [...store],
     ),
     findOne: vi.fn(async (arg: { where: Record<string, unknown> }) =>
-      store.find((r) => matches(r as never, arg.where)) ?? null,
+      store.find((r) => matchesWhere(r as never, arg.where)) ?? null,
     ),
     exists: vi.fn(async (arg: { where: Record<string, unknown> }) =>
-      store.some((r) => matches(r as never, arg.where)),
+      store.some((r) => matchesWhere(r as never, arg.where)),
     ),
     count: vi.fn(async (arg?: { where?: Record<string, unknown> }) =>
-      arg?.where ? store.filter((r) => matches(r as never, arg.where!)).length : store.length,
+      arg?.where ? store.filter((r) => matchesWhere(r as never, arg.where!)).length : store.length,
     ),
     create: vi.fn((data: Partial<T>) => ({ ...data }) as T),
     save: vi.fn(async (row: T) => {
@@ -88,6 +92,37 @@ function fakeRepo<T extends { id?: string }>(rows: T[] = []) {
   };
   return repo;
 }
+
+/**
+ * The uniform view of an in-memory repository that the fake manager needs.
+ * The service reaches its rows through the entity class it was handed, so the
+ * fake has to resolve that class back to the right store.
+ */
+interface AnyRows {
+  find: (arg?: { where?: Record<string, unknown> }) => Promise<Array<Record<string, unknown>>>;
+  findOne: (arg: { where: Record<string, unknown> }) => Promise<Record<string, unknown> | null>;
+  count: (arg?: { where?: Record<string, unknown> }) => Promise<number>;
+  save: (row: never) => Promise<never>;
+  _rows: () => Array<Record<string, unknown>>;
+  _set: (rows: Array<Record<string, unknown>>) => void;
+}
+
+/**
+ * Turns the `alias.column = :param` clauses the service builds into the flat
+ * `{ column: value }` shape the in-memory repositories match on.
+ */
+function parseWhere(sql: string, params: Record<string, unknown>): Record<string, unknown> {
+  const where: Record<string, unknown> = {};
+  for (const clause of sql.split(' AND ')) {
+    const match = clause.match(/^\s*[\w.]+\.(\w+)\s*=\s*:(\w+)\s*$/);
+    if (!match) {
+      continue;
+    }
+    where[match[1]!] = params[match[2]!];
+  }
+  return where;
+}
+
 
 interface Harness {
   service: SubjectTeamsService;
@@ -131,17 +166,89 @@ function makeService(configure?: (repos: ReturnType<typeof buildRepos>) => void)
     },
   );
 
+  // The manager reaches rows through the entity class it is given, so the fake
+  // resolves that class back to the matching in-memory store.
+  const repoFor = (entity: unknown): AnyRows | null => {
+    switch (entity) {
+      case StudyTeam:
+        return repos.teams as unknown as AnyRows;
+      case TeamTaskSlot:
+        return repos.slots as unknown as AnyRows;
+      case TeamMembership:
+        return repos.memberships as unknown as AnyRows;
+      case TeamJoinRequest:
+        return repos.requests as unknown as AnyRows;
+      case AcademicSection:
+        return repos.sections as unknown as AnyRows;
+      case Subject:
+        return repos.subjects as unknown as AnyRows;
+      case User:
+        return repos.users as unknown as AnyRows;
+      default:
+        return null;
+    }
+  };
+
   const manager = {
     create: (entity: unknown, data: Record<string, unknown>) => ({ ...data }) as never,
-    save: async (row: never) => row,
-    findOne: async () => null,
-    find: async () => [],
-    count: async () => 0,
-    createQueryBuilder: () => {
+    save: async (first: unknown, second?: unknown) => {
+      // TypeORM accepts both `save(row)` and `save(Entity, row)`; only the
+      // two-argument form states which store the row belongs to.
+      if (second === undefined) {
+        return first;
+      }
+      const repo = repoFor(first);
+      if (!repo) {
+        return second;
+      }
+      return repo.save(second as never);
+    },
+    findOne: async (entity: unknown, options?: { where?: Record<string, unknown> }) => {
+      const repo = repoFor(entity);
+      if (!repo) {
+        return null;
+      }
+      return repo.findOne({ where: options?.where ?? {} });
+    },
+    find: async (entity: unknown, options?: { where?: Record<string, unknown> }) => {
+      const repo = repoFor(entity);
+      if (!repo) {
+        return [];
+      }
+      return repo.find({ where: options?.where });
+    },
+    count: async (entity: unknown, options?: { where?: Record<string, unknown> }) => {
+      const repo = repoFor(entity);
+      if (!repo) {
+        return 0;
+      }
+      return repo.count({ where: options?.where });
+    },
+    delete: async (entity: unknown, where: Record<string, unknown>) => {
+      const repo = repoFor(entity);
+      if (!repo) {
+        return { affected: 0 };
+      }
+      const rows = repo._rows();
+      const kept = rows.filter((row) => !matchesWhere(row, where));
+      repo._set(kept);
+      return { affected: rows.length - kept.length };
+    },
+    createQueryBuilder: (entity: unknown) => {
+      const repo = repoFor(entity);
+      const where: Record<string, unknown> = {};
       const builder = {
         setLock: () => builder,
-        where: () => builder,
-        getOne: async () => null,
+        where: (sql: string, params: Record<string, unknown>) => {
+          Object.assign(where, parseWhere(sql, params));
+          return builder;
+        },
+        andWhere: (sql: string, params: Record<string, unknown>) => {
+          Object.assign(where, parseWhere(sql, params));
+          return builder;
+        },
+        getOne: async () => (repo ? repo.findOne({ where }) : null),
+        getMany: async () => (repo ? repo.find({ where }) : []),
       };
       return builder;
     },
@@ -657,5 +764,171 @@ describe('SubjectTeamsService.cancelJoinRequest (authorization)', () => {
     await service.cancelJoinRequest(actor(UserRole.STUDENT, STUDENT), TEAM, 'r1');
     const row = repos.requests._rows().find((r) => r.id === 'r1');
     expect(row?.status).toBe(JoinRequestStatus.CANCELLED);
+  });
+});
+
+/**
+ * A team with two members (the creator and one ordinary member), two occupied
+ * task slots and one pending join request — the shape both destructive
+ * operations have to cope with.
+ */
+function seedTeamWithMembers(repos: ReturnType<typeof buildRepos>): void {
+  repos.teams._set([
+    {
+      id: TEAM,
+      name: 'فريق',
+      description: null,
+      subjectId: SUBJ,
+      semesterId: TERM,
+      sectionId: SEC_A,
+      professorId: PROF_A,
+      scope: TeamScope.SECTION,
+      creatorId: OWNER,
+      maxMembers: 3,
+      contactMethod: TeamContactMethod.TELEGRAM,
+      contactValue: 'studygroup',
+      status: TeamStatus.ACTIVE,
+      visibility: 'PUBLIC',
+      createdAt: new Date(),
+    } as unknown as StudyTeam,
+  ]);
+  repos.slots._set([
+    {
+      id: 's1',
+      teamId: TEAM,
+      position: 1,
+      taskDescription: 'مهمة المنشئ',
+      state: TeamTaskSlotState.JOINED,
+      memberId: OWNER,
+    } as TeamTaskSlot,
+    {
+      id: 's2',
+      teamId: TEAM,
+      position: 2,
+      taskDescription: 'مهمة العضو',
+      state: TeamTaskSlotState.JOINED,
+      memberId: STUDENT,
+    } as TeamTaskSlot,
+  ]);
+  repos.memberships._set([
+    {
+      id: 'm1',
+      teamId: TEAM,
+      userId: OWNER,
+      role: TeamRole.OWNER,
+      slotId: 's1',
+      subjectId: SUBJ,
+      semesterId: TERM,
+    } as TeamMembership,
+    {
+      id: 'm2',
+      teamId: TEAM,
+      userId: STUDENT,
+      role: TeamRole.MEMBER,
+      slotId: 's2',
+      subjectId: SUBJ,
+      semesterId: TERM,
+    } as TeamMembership,
+  ]);
+  repos.requests._set([
+    {
+      id: 'r1',
+      teamId: TEAM,
+      studentId: 'a-third-student',
+      slotId: 's2',
+      status: JoinRequestStatus.PENDING,
+    } as TeamJoinRequest,
+  ]);
+}
+
+describe('SubjectTeamsService.deleteTeam (creator-only deletion)', () => {
+  it('deletes the team together with its memberships, slots and join requests', async () => {
+    const { service, repos } = makeService(seedTeamWithMembers);
+    await service.deleteTeam(actor(UserRole.STUDENT, OWNER), TEAM);
+    expect(repos.teams._rows()).toHaveLength(0);
+    expect(repos.memberships._rows()).toHaveLength(0);
+    expect(repos.slots._rows()).toHaveLength(0);
+    expect(repos.requests._rows()).toHaveLength(0);
+  });
+
+  it('refuses to delete a team the caller did not create', async () => {
+    const { service, repos } = makeService(seedTeamWithMembers);
+    await expect(
+      service.deleteTeam(actor(UserRole.STUDENT, STUDENT), TEAM),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    // Nothing was removed: an ordinary member can never delete the team.
+    expect(repos.teams._rows()).toHaveLength(1);
+    expect(repos.memberships._rows()).toHaveLength(2);
+    expect(repos.slots._rows()).toHaveLength(2);
+  });
+
+  it('reports a missing team as not found', async () => {
+    const { service } = makeService();
+    await expect(
+      service.deleteTeam(actor(UserRole.STUDENT, OWNER), TEAM),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('is not repeatable: a second deletion finds nothing left to delete', async () => {
+    const { service } = makeService(seedTeamWithMembers);
+    await service.deleteTeam(actor(UserRole.STUDENT, OWNER), TEAM);
+    await expect(
+      service.deleteTeam(actor(UserRole.STUDENT, OWNER), TEAM),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('SubjectTeamsService.leaveTeam (self-leave)', () => {
+  it('removes only the caller membership and releases the occupied slot', async () => {
+    const { service, repos } = makeService(seedTeamWithMembers);
+    await service.leaveTeam(actor(UserRole.STUDENT, STUDENT), TEAM);
+
+    // The team itself and the other members are untouched.
+    expect(repos.teams._rows()).toHaveLength(1);
+    expect(repos.memberships._rows().map((m) => m.userId)).toEqual([OWNER]);
+
+    // The freed slot becomes available again ...
+    const freed = repos.slots._rows().find((s) => s.id === 's2');
+    expect(freed?.state).toBe(TeamTaskSlotState.OPEN);
+    expect(freed?.memberId).toBeNull();
+
+    // ... while the creator's own slot is left alone.
+    const ownerSlot = repos.slots._rows().find((s) => s.id === 's1');
+    expect(ownerSlot?.state).toBe(TeamTaskSlotState.JOINED);
+    expect(ownerSlot?.memberId).toBe(OWNER);
+  });
+
+  it('refuses to let the creator leave the team', async () => {
+    const { service, repos } = makeService(seedTeamWithMembers);
+    await expect(
+      service.leaveTeam(actor(UserRole.STUDENT, OWNER), TEAM),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repos.memberships._rows()).toHaveLength(2);
+  });
+
+  it('refuses to leave a team the caller is not a member of', async () => {
+    const { service, repos } = makeService(seedTeamWithMembers);
+    await expect(
+      service.leaveTeam(actor(UserRole.STUDENT, 'a-stranger'), TEAM),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(repos.memberships._rows()).toHaveLength(2);
+  });
+
+  it('cancels the caller own pending request for the same team', async () => {
+    const { service, repos } = makeService((r) => {
+      seedTeamWithMembers(r);
+      r.requests._set([
+        {
+          id: 'r1',
+          teamId: TEAM,
+          studentId: STUDENT,
+          slotId: 's2',
+          status: JoinRequestStatus.PENDING,
+        } as TeamJoinRequest,
+      ]);
+    });
+    await service.leaveTeam(actor(UserRole.STUDENT, STUDENT), TEAM);
+    const request = repos.requests._rows().find((r) => r.id === 'r1');
+    expect(request?.status).toBe(JoinRequestStatus.CANCELLED);
   });
 });

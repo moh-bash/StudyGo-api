@@ -106,11 +106,12 @@ export interface CreatorJoinRequestView {
  * Phase 5 subject-team service.
  *
  * Owns team creation, eligibility/visibility, task slots, the in-app join
- * request workflow, membership, and editing — all enforced server-side from the
- * authenticated caller. The student's section for a subject+term is supplied by
- * the client (it is not derivable from the server) but is always re-validated
- * here against the real section/subject/term/professor catalog and the caller's
- * own academic program; nothing sensitive is ever inferred from a display name.
+ * request workflow, membership, editing and deletion — all enforced server-side
+ * from the authenticated caller. The student's section for a subject+term is
+ * supplied by the client (it is not derivable from the server) but is always
+ * re-validated here against the real section/subject/term/professor catalog and
+ * the caller's own academic program; nothing sensitive is ever inferred from a
+ * display name.
  */
 @Injectable()
 export class SubjectTeamsService {
@@ -997,5 +998,109 @@ export class SubjectTeamsService {
     if (actor.role !== UserRole.ADMIN && team.creatorId !== actor.id) {
       throw new ForbiddenException('Only the team creator can perform this action');
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Deletion + membership
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Deletes a subject team — the creator only.
+   *
+   * The whole team goes with it: its task slots, its memberships and its join
+   * requests. Everything happens inside one transaction, so a team can never be
+   * left half-deleted (memberships without a team, requests pointing at a team
+   * that no longer exists). The team row is locked first, so a concurrent
+   * accept/reject cannot slip a new membership in between the check and the
+   * delete.
+   *
+   * Tasks and calendar events that referenced the team are *not* deleted: their
+   * foreign key is `ON DELETE SET NULL`, so they survive as unassigned work.
+   */
+  async deleteTeam(actor: AuthenticatedUser, teamId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const team = await manager
+        .createQueryBuilder(StudyTeam, 'team')
+        .setLock('pessimistic_write')
+        .where('team.id = :teamId', { teamId })
+        .getOne();
+      if (!team) {
+        throw new NotFoundException('Team not found');
+      }
+      // Only the creator may delete the team. A member can never delete it —
+      // not even through the subject-removal flow.
+      this.assertCreator(team, actor);
+
+      // The foreign keys already cascade from the team row, but deleting the
+      // children explicitly keeps the intent obvious and makes the cleanup
+      // independent of those cascade rules.
+      await manager.delete(TeamJoinRequest, { teamId });
+      await manager.delete(TeamMembership, { teamId });
+      await manager.delete(TeamTaskSlot, { teamId });
+      await manager.delete(StudyTeam, { id: teamId });
+    });
+  }
+
+  /**
+   * Removes the caller's own membership from a team (self-leave).
+   *
+   * The creator cannot leave: a team without its creator would have no owner,
+   * so the creator has to delete the team instead. The caller's task slot is
+   * released back to OPEN so another student can take it, and the team itself
+   * — with all its other members — is left untouched.
+   */
+  async leaveTeam(actor: AuthenticatedUser, teamId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const team = await manager
+        .createQueryBuilder(StudyTeam, 'team')
+        .setLock('pessimistic_write')
+        .where('team.id = :teamId', { teamId })
+        .getOne();
+      if (!team) {
+        throw new NotFoundException('Team not found');
+      }
+      if (team.creatorId === actor.id) {
+        throw new BadRequestException(
+          'The team creator cannot leave the team; delete the team instead',
+        );
+      }
+
+      const membership = await manager.findOne(TeamMembership, {
+        where: { teamId, userId: actor.id },
+      });
+      if (!membership) {
+        throw new NotFoundException('You are not a member of this team');
+      }
+
+      // Release the occupied slot so it becomes available to another student.
+      if (membership.slotId) {
+        const slot = await manager
+          .createQueryBuilder(TeamTaskSlot, 'slot')
+          .setLock('pessimistic_write')
+          .where('slot.id = :slotId AND slot.teamId = :teamId', {
+            slotId: membership.slotId,
+            teamId,
+          })
+          .getOne();
+        if (slot && slot.memberId === actor.id) {
+          slot.state = TeamTaskSlotState.OPEN;
+          slot.memberId = null;
+          await manager.save(TeamTaskSlot, slot);
+        }
+      }
+
+      await manager.delete(TeamMembership, { id: membership.id });
+
+      // A pending request of the same student for this team can no longer be
+      // honoured, so it is cancelled rather than left to occupy a slot.
+      const pending = await manager.find(TeamJoinRequest, {
+        where: { teamId, studentId: actor.id, status: JoinRequestStatus.PENDING },
+      });
+      for (const request of pending) {
+        request.status = JoinRequestStatus.CANCELLED;
+        request.decidedAt = new Date();
+        await manager.save(TeamJoinRequest, request);
+      }
+    });
   }
 }

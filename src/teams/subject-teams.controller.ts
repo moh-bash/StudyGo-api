@@ -42,6 +42,11 @@ import {
  * All routes require an authenticated session; student operations additionally
  * require the STUDENT role. Identity, eligibility and visibility are always
  * derived from the caller and the catalog — never trusted from the body.
+ *
+ * The two destructive routes are deliberately narrower than the rest:
+ * `DELETE /teams/subject/:id` deletes the team and is creator-only, and
+ * `DELETE /teams/subject/:id/members/me` removes only the caller's own
+ * membership (the creator must delete the team instead of leaving it).
  */
 @ApiTags('teams')
 @ApiBearerAuth('access-token')
@@ -155,5 +160,31 @@ export class SubjectTeamsController {
     @Param('requestId', new ParseUUIDPipe()) requestId: string,
   ): Promise<void> {
     return this.subjectTeams.cancelJoinRequest(user, id, requestId);
+  }
+
+  @Delete(':id/members/me')
+  @Roles(UserRole.STUDENT)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Leave the team (releases my task slot)' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiNoContentResponse()
+  leaveTeam(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<void> {
+    return this.subjectTeams.leaveTeam(user, id);
+  }
+
+  @Delete(':id')
+  @Roles(UserRole.STUDENT)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete my team (creator only; removes every member)' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiNoContentResponse()
+  deleteTeam(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<void> {
+    return this.subjectTeams.deleteTeam(user, id);
   }
 }
